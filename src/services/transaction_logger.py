@@ -48,21 +48,21 @@ class TransactionLogger:
         # Obtém o saldo atual do ativo base
         asset_balance = portfolio_manager.assets.get(base_asset, {}).get('quantity', 0)
 
-        # Constrói a linha de dados detalhada
+        # Constrói a linha de dados detalhada com formatação
         data = {
             'date_time': datetime.now(),
             'asset': transaction['asset'],
             'transaction_type': transaction['type'],
-            'quantity': transaction['quantity'],
-            'price_per_asset': transaction['price'],
-            'total_value': transaction['quantity'] * transaction['price'],
+            'quantity': f"{transaction['quantity']:.8f}",  # Formato para até 8 casas decimais
+            'price_per_asset': f"{transaction['price']:.2f}",  # Formato para 2 casas decimais
+            'total_value': f"{transaction['quantity'] * transaction['price']:.2f}",
             'reason': transaction['reason'],
-            'profit_loss': profit_loss,
-            'total_balance': total_balance,
-            'asset_balance': asset_balance,
-            'investment_usd': investment,
-            'returned_to_cash_usd': returned_to_cash,
-            'cumulative_profit_loss': self.cumulative_profit_loss
+            'profit_loss': f"{profit_loss:.2f}",
+            'total_balance': f"{total_balance:.2f}",
+            'asset_balance': f"{asset_balance:.8f}",
+            'investment_usd': f"{investment:.2f}",
+            'returned_to_cash_usd': f"{returned_to_cash:.2f}",
+            'cumulative_profit_loss': f"{self.cumulative_profit_loss:.2f}"
         }
         
         # Converte a transação para DataFrame e adiciona ao Excel em tempo real

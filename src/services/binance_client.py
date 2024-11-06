@@ -21,47 +21,47 @@ def get_realtime_price(symbol):
     ticker = client.get_symbol_ticker(symbol=symbol)
     return float(ticker['price'])
 
-def get_historical_data(symbol, interval='1h', periods=200, max_lookback_days=60):
-    """Obtém dados históricos em lotes controlados até alcançar o período desejado."""
-    end_date = datetime.now()
-    all_klines = []
+from binance.client import Client
+from datetime import datetime, timedelta
+import pandas as pd
+import time
 
-    while len(all_klines) < periods:
-        # Calcula o intervalo de dias para a requisição atual
-        start_date = end_date - timedelta(days=max_lookback_days)
 
-        # Obtém dados históricos para o intervalo especificado
+import pandas as pd
+
+def get_historical_data(symbol, interval='30m', max_limit=1000):
+    """
+    Obtém até o máximo de dados históricos disponíveis para o 'symbol' e 'interval' especificados.
+    """
+    try:
+        # Solicita até 1000 registros, o máximo permitido pela API sem especificar datas
         klines = client.get_historical_klines(
-            symbol, interval,
-            start_str=start_date.strftime('%d %b %Y %H:%M:%S'),
-            end_str=end_date.strftime('%d %b %Y %H:%M:%S')
+            symbol,
+            interval,
+            limit=max_limit
         )
 
-        # Verifica se obteve dados
+        # Verifica se os dados foram recebidos
         if not klines:
-            print("DEBUG: Nenhum dado obtido para o intervalo atual. Encerrando coleta.")
-            break
+            print("Nenhum dado retornado pela API.")
+            return None
 
-        # Adiciona novos dados ao acumulador
-        all_klines = klines + all_klines  # Insere no início para manter ordem cronológica
-        end_date = datetime.fromtimestamp(klines[0][0] / 1000)  # Atualiza a data final para próxima requisição
+        # Converte para DataFrame e seleciona colunas necessárias
+        data = pd.DataFrame(klines, columns=[
+            'timestamp', 'open', 'high', 'low', 'close', 'volume',
+            'close_time', 'quote_asset_volume', 'number_of_trades',
+            'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
+        ])
+        data['close'] = data['close'].astype(float)
+        data = data[['timestamp', 'close']]
 
-        # Log da quantidade de dados coletados
-        print(f"DEBUG: {len(klines)} novos dados coletados, total acumulado: {len(all_klines)} linhas.")
+        print(f"DEBUG: Total de {len(data)} dados retornados para {symbol} no intervalo {interval}.")
+        return data
 
-    # Converte os dados para um DataFrame
-    data = pd.DataFrame(all_klines, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 
-                                             'close_time', 'quote_asset_volume', 'number_of_trades', 
-                                             'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'])
-    data['close'] = data['close'].astype(float)
+    except Exception as e:
+        print(f"Erro ao coletar dados históricos: {e}")
+        return None
 
-    # Limita os dados ao número necessário de períodos
-    data = data[['timestamp', 'close']].tail(periods)
-    
-    # Log final para verificação
-    print(f"DEBUG: Total de {len(data)} dados retornados para {symbol} no intervalo {interval}.")
-    
-    return data
 
 def get_asset_quantity(asset):
     """Obtém a quantidade de um ativo específico na conta Binance."""
