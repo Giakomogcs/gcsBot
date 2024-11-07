@@ -145,3 +145,31 @@ def execute_trade(asset, quantity, side):
     except Exception as e:
         print(f"Erro ao executar ordem {side} para {asset}: {e}")
         return None
+
+
+def get_consecutive_trades(symbol, trade_type):
+    """
+    Recupera o número de transações consecutivas do tipo especificado (buy ou sell)
+    no histórico de ordens da Binance.
+    """
+    # Recupera o histórico de ordens para o símbolo
+    orders = client.get_all_orders(symbol=symbol, limit=100)
+
+    # Garante que `trade_type` está em minúsculas para evitar inconsistências
+    trade_type = trade_type.lower()
+
+    # Filtra apenas ordens preenchidas ('FILLED') e do tipo especificado
+    filled_orders = [order for order in orders if order['status'] == 'FILLED']
+
+    # Conta as transações consecutivas do tipo especificado
+    consecutive_count = 0
+    for order in reversed(filled_orders):
+        # Verifica e conta apenas transações consecutivas do tipo correto
+        if order['side'].lower() == trade_type:
+            consecutive_count += 1
+        else:
+            # Interrompe a contagem ao encontrar uma transação de tipo oposto
+            break
+
+    # Retorna o total de transações consecutivas do tipo especificado
+    return consecutive_count

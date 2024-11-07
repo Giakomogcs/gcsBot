@@ -17,8 +17,9 @@ class TransactionLogger:
         # Cria um DataFrame vazio com as colunas detalhadas apropriadas
         columns = [
             'date_time', 'asset', 'transaction_type', 'quantity', 'price_per_asset', 
-            'total_value', 'reason', 'profit_loss', 'total_balance', 'asset_balance',
-            'investment_usd', 'returned_to_cash_usd', 'cumulative_profit_loss'
+            'transaction_total', 'reason', 'profit_loss', 'total_balance', 'asset_balance',
+            'investment_usd', 'returned_to_cash_usd', 'cumulative_profit_loss',
+            'usdt_balance', 'roi_percentage', 'cumulative_profit_loss_percentage'
         ]
         df = pd.DataFrame(columns=columns)
         df.to_excel(self.file_name, index=False)
@@ -45,24 +46,32 @@ class TransactionLogger:
         total_balance = portfolio_manager.cash_balance + sum(
             asset['quantity'] * asset['average_cost'] for asset in portfolio_manager.assets.values()
         )
+
         # Obtém o saldo atual do ativo base
         asset_balance = portfolio_manager.assets.get(base_asset, {}).get('quantity', 0)
 
-        # Constrói a linha de dados detalhada com formatação
+        # Calcula ROI e porcentagem de lucro/prejuízo acumulado
+        roi_percentage = ((total_balance - self.initial_balance) / self.initial_balance) * 100
+        cumulative_profit_loss_percentage = (self.cumulative_profit_loss / self.initial_balance) * 100
+
+        # Constrói a linha de dados detalhada
         data = {
             'date_time': datetime.now(),
             'asset': transaction['asset'],
             'transaction_type': transaction['type'],
-            'quantity': f"{transaction['quantity']:.8f}",  # Formato para até 8 casas decimais
-            'price_per_asset': f"{transaction['price']:.2f}",  # Formato para 2 casas decimais
-            'total_value': f"{transaction['quantity'] * transaction['price']:.2f}",
+            'quantity': f"{transaction['quantity']:.8f}",  # Quantidade exata da transação
+            'price_per_asset': f"{transaction['price']:.2f}",  # Preço unitário em USDT por ativo
+            'transaction_total': f"{transaction['quantity'] * transaction['price']:.2f}",  # Valor total da transação em USDT
             'reason': transaction['reason'],
             'profit_loss': f"{profit_loss:.2f}",
             'total_balance': f"{total_balance:.2f}",
             'asset_balance': f"{asset_balance:.8f}",
             'investment_usd': f"{investment:.2f}",
             'returned_to_cash_usd': f"{returned_to_cash:.2f}",
-            'cumulative_profit_loss': f"{self.cumulative_profit_loss:.2f}"
+            'cumulative_profit_loss': f"{self.cumulative_profit_loss:.2f}",
+            'usdt_balance': f"{portfolio_manager.cash_balance:.2f}",
+            'roi_percentage': f"{roi_percentage:.2f}",
+            'cumulative_profit_loss_percentage': f"{cumulative_profit_loss_percentage:.2f}"
         }
         
         # Converte a transação para DataFrame e adiciona ao Excel em tempo real
