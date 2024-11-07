@@ -37,7 +37,7 @@ def calculate_indicators(df, short_ma_period=10, long_ma_period=60, rsi_period=1
 
     return short_ma, long_ma, rsi, volume_filter, ema_20, ema_50
 
-def trading_decision(asset, price, portfolio_manager, df, volume_threshold=1.2):
+def trading_decision(asset, price, portfolio_manager, df, volume_threshold=1.6):
     risk_manager = RiskManager(portfolio_manager)
     short_ma_period = 10
     long_ma_period = 70
@@ -70,10 +70,9 @@ def trading_decision(asset, price, portfolio_manager, df, volume_threshold=1.2):
         buy_score += 1
         logger.info("Condição de compra atendida: Volume alto. Pontuação: +1")
     else:
-        # Adiciona pontuação proporcional se estiver próximo do limiar
         volume_proximity = df['volume'].iloc[-1] / (volume_threshold * df['volume'].rolling(window=10).mean().iloc[-1])
-        buy_score += min(0.5 * volume_proximity, 0.5)
-        logger.info(f"Volume próximo do limite, pontuação extra adicionada: +{min(0.5 * volume_proximity, 0.5):.2f}")
+        buy_score += min(0.75 * volume_proximity, 0.75)  # Pontuação mais generosa para proximidade
+        logger.info(f"Volume próximo do limite, pontuação extra adicionada: +{min(0.75 * volume_proximity, 0.75):.2f}")
 
     # Short MA acima da Long MA - Máximo: 4 pontos
     ma_distance = short_ma - long_ma
@@ -81,8 +80,7 @@ def trading_decision(asset, price, portfolio_manager, df, volume_threshold=1.2):
         buy_score += min(4 * (ma_distance / long_ma), 4)
         logger.info(f"Condição de compra atendida: Short MA acima da Long MA com distância {ma_distance:.2f}. Pontuação: +{min(4 * (ma_distance / long_ma), 4):.2f}")
     else:
-        # Pontuação proporcional para proximidade
-        proximity_score = min(2 * (1 - (abs(ma_distance) / long_ma)), 2)
+        proximity_score = min(2.5 * (1 - (abs(ma_distance) / long_ma)), 2.5)
         buy_score += proximity_score
         logger.info(f"Short MA próximo da Long MA, pontuação extra adicionada: +{proximity_score:.2f}. Distância: {ma_distance:.2f}")
 
@@ -92,8 +90,7 @@ def trading_decision(asset, price, portfolio_manager, df, volume_threshold=1.2):
         buy_score += min(3 * (ema_distance / ema_50), 3)
         logger.info(f"Condição de compra atendida: EMA_20 acima da EMA_50 com distância {ema_distance:.2f}. Pontuação: +{min(3 * (ema_distance / ema_50), 3):.2f}")
     else:
-        # Pontuação extra se próximo ao limiar
-        proximity_score = min(1.5 * (1 - (abs(ema_distance) / ema_50)), 1.5)
+        proximity_score = min(2 * (1 - (abs(ema_distance) / ema_50)), 2)
         buy_score += proximity_score
         logger.info(f"EMA_20 próximo da EMA_50, pontuação extra adicionada: +{proximity_score:.2f}. Distância: {ema_distance:.2f}")
 
@@ -102,7 +99,7 @@ def trading_decision(asset, price, portfolio_manager, df, volume_threshold=1.2):
         buy_score += min(1 * ((55 - rsi) / 55), 1)
         logger.info(f"Condição de compra atendida: RSI ({rsi}) abaixo de 55. Pontuação: +{min(1 * ((55 - rsi) / 55), 1):.2f}")
     else:
-        proximity_score = min(0.5 * ((60 - rsi) / 60), 0.5)
+        proximity_score = min(0.75 * ((60 - rsi) / 60), 0.75)
         buy_score += proximity_score
         logger.info(f"RSI próximo do limite, pontuação extra adicionada: +{proximity_score:.2f}")
 
@@ -123,7 +120,7 @@ def trading_decision(asset, price, portfolio_manager, df, volume_threshold=1.2):
         sell_score += min(2 * ((rsi - 60) / 40), 2)
         logger.info(f"Condição de venda atendida: RSI ({rsi}) acima de 60. Pontuação: +{min(2 * ((rsi - 60) / 40), 2):.2f}")
     else:
-        proximity_score = min(1 * ((rsi - 55) / 60), 1) if rsi > 55 else 0
+        proximity_score = min(1.5 * ((rsi - 55) / 60), 1.5) if rsi > 55 else 0
         sell_score += proximity_score
         logger.info(f"RSI próximo do limite, pontuação extra adicionada: +{proximity_score:.2f}")
 
@@ -132,7 +129,7 @@ def trading_decision(asset, price, portfolio_manager, df, volume_threshold=1.2):
         sell_score += min(4 * (abs(short_ma - long_ma) / long_ma), 4)
         logger.info(f"Condição de venda atendida: Short MA abaixo da Long MA com distância {short_ma - long_ma:.2f}. Pontuação: +{min(4 * (abs(short_ma - long_ma) / long_ma), 4):.2f}")
     else:
-        proximity_score = min(2 * (1 - (abs(short_ma - long_ma) / long_ma)), 2)
+        proximity_score = min(2.5 * (1 - (abs(short_ma - long_ma) / long_ma)), 2.5)
         sell_score += proximity_score
         logger.info(f"Short MA próximo da Long MA, pontuação extra adicionada: +{proximity_score:.2f}")
 
@@ -141,7 +138,7 @@ def trading_decision(asset, price, portfolio_manager, df, volume_threshold=1.2):
         sell_score += min(3 * (abs(ema_20 - ema_50) / ema_50), 3)
         logger.info(f"Condição de venda atendida: EMA_20 abaixo da EMA_50 com distância {ema_20 - ema_50:.2f}. Pontuação: +{min(3 * (abs(ema_20 - ema_50) / ema_50), 3):.2f}")
     else:
-        proximity_score = min(1.5 * (1 - (abs(ema_20 - ema_50) / ema_50)), 1.5)
+        proximity_score = min(2 * (1 - (abs(ema_20 - ema_50) / ema_50)), 2)
         sell_score += proximity_score
         logger.info(f"EMA_20 próximo da EMA_50, pontuação extra adicionada: +{proximity_score:.2f}")
 
@@ -159,12 +156,11 @@ def trading_decision(asset, price, portfolio_manager, df, volume_threshold=1.2):
     else:
         logger.info(f"Condição de venda não atendida: Preço atual ({price}) não é maior que o preço médio de compra.")
 
-
-    # Pontuação Máxima de Venda: 11 pontos
+    # Pontuação Máxima de Venda: 13 pontos
 
     # Define os limiares para compra e venda
-    buy_threshold = 5.5  # Reduzido para 55% da pontuação máxima
-    sell_threshold = 6  # Reduzido para 60% da pontuação máxima
+    buy_threshold = 6.5  # Ajustado para permitir compras em cenários próximos ao ideal
+    sell_threshold = 7  # Ajustado para permitir vendas em condições próximas ao ideal
 
     # Determina o valor de compra e venda com base no saldo disponível
     cash_balance = portfolio_manager.get_cash_balance()

@@ -76,6 +76,8 @@ async def realtime_trading_bot():
                         logger.error(f"Coluna necessária '{col}' ausente no DataFrame. Verifique a origem dos dados.")
                         await asyncio.sleep(10)
                         continue
+                
+                #print(df)
 
             except Exception as e:
                 logger.error(f"Erro ao obter dados históricos após várias tentativas: {e}")
