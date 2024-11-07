@@ -4,3 +4,5 @@ openpyxl
 requests  # Biblioteca popular para fazer requisições HTTP
 pandas  # Se estiver manipulando dados tabulares
 numpy  # Se precisar de operações matemáticas complexas
+tenacity
+asyncio

@@ -1,7 +1,7 @@
 from src.services.binance_client import get_account_balance
 
 class PortfolioManager:
-    def __init__(self, stop_loss=0.08, take_profit=0.2, investor_profile='moderado', reserve_cash=100):
+    def __init__(self, stop_loss=0.08, take_profit=0.2, investor_profile='moderado', reserve_cash=100, min_asset_quantity=0.001):
         # Inicializa o balance_df com os dados de saldo da Binance
         self.balance_df = get_account_balance()
         
@@ -10,6 +10,7 @@ class PortfolioManager:
         self.initial_balance = usdt_balance[0] if len(usdt_balance) > 0 else 0.0
         self.cash_balance = self.initial_balance
         self.reserve_cash = reserve_cash  # Quantia mínima de segurança para saldo de caixa
+        self.min_asset_quantity = min_asset_quantity  # Quantidade mínima de segurança para saldo de ativos
 
         # Inicializa os ativos com as quantidades e custos médios
         self.assets = {}
@@ -24,16 +25,19 @@ class PortfolioManager:
         self.take_profit = take_profit
         self.investor_profile = investor_profile
         self.profit_loss_cumulative = 0  # Controle de ganhos/perdas acumuladas
+        self.previous_close_price = {}  # Armazena os preços de fechamento anteriores por ativo
 
     def get_investment_percentage(self):
-        """Define o percentual de investimento com base no perfil do investidor."""
+        """Define o percentual de investimento com base no perfil do investidor e na volatilidade do mercado."""
         balance = self.cash_balance
-        if balance < 200:
-            return 0.03  # 3% para carteiras pequenas
-        elif balance < 2000:
-            return 0.07  # 7% para carteiras médias
+        if self.investor_profile == 'conservador':
+            return 0.03
+        elif self.investor_profile == 'moderado':
+            return 0.05 if balance < 2000 else 0.1
+        elif self.investor_profile == 'arrojado':
+            return 0.1 if balance < 2000 else 0.2
         else:
-            return 0.15  # 15% para carteiras grandes
+            return 0.05
 
     def get_cash_balance(self):
         """Retorna o saldo de caixa atual, considerando a reserva mínima de segurança."""
@@ -58,13 +62,11 @@ class PortfolioManager:
             self.cash_balance += cost
             self.assets[asset]['quantity'] -= quantity
             profit_loss = (price - self.assets[asset]['average_cost']) * quantity
-            self.profit_loss_cumulative += profit_loss  # Atualiza lucro/prejuízo acumulado
+            self.profit_loss_cumulative += profit_loss
 
-            # Remove o ativo se a quantidade for zero
-            if self.assets[asset]['quantity'] <= 0:
+            if self.assets[asset]['quantity'] <= self.min_asset_quantity:
                 del self.assets[asset]
 
-        # Atualiza o perfil do investidor com base no desempenho recente
         self.update_investor_profile()
 
     def check_stop_loss_take_profit(self):
@@ -75,21 +77,27 @@ class PortfolioManager:
         elif self.profit_loss_cumulative >= self.initial_balance * self.take_profit:
             print("Take profit atingido. Pausando operações.")
             return 'take_profit'
-        return 'continue'  # Continua operando caso os limites não sejam atingidos
+        return 'continue'
 
     def update_investor_profile(self):
         """Atualiza o perfil de investidor com base nos resultados acumulados e no tamanho da carteira."""
         if self.profit_loss_cumulative >= self.initial_balance * 0.15:
-            # Aumenta a agressividade do perfil se os lucros acumulados forem altos
             if self.investor_profile == 'conservador':
                 self.investor_profile = 'moderado'
             elif self.investor_profile == 'moderado':
                 self.investor_profile = 'arrojado'
             print(f"Perfil atualizado para {self.investor_profile} devido a desempenho positivo.")
         elif self.profit_loss_cumulative <= -self.initial_balance * 0.05:
-            # Reduz a agressividade do perfil se as perdas acumuladas forem significativas
             if self.investor_profile == 'arrojado':
                 self.investor_profile = 'moderado'
             elif self.investor_profile == 'moderado':
                 self.investor_profile = 'conservador'
             print(f"Perfil atualizado para {self.investor_profile} devido a desempenho negativo.")
+
+    def get_previous_close_price(self, asset):
+        """Retorna o preço de fechamento anterior armazenado do ativo."""
+        return self.previous_close_price.get(asset, 0.0)
+
+    def update_previous_close_price(self, asset, close_price):
+        """Atualiza o preço de fechamento anterior do ativo."""
+        self.previous_close_price[asset] = close_price
