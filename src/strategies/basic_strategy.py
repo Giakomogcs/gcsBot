@@ -5,8 +5,16 @@ import pandas_ta as ta
 import logging
 
 # Configuração do logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger()
+
+# Configurações de lucro e perda
+MIN_PROFIT_PERCENTAGE = 0.02  # 2% de lucro
+STOP_LOSS_PERCENTAGE = 0.01  # 1% de perda
+
+# Variáveis globais para armazenar o preço de compra/venda mais recente
+last_buy_price = None
+last_sell_price = None
 
 def calculate_indicators(df, short_ma_period=10, long_ma_period=60, rsi_period=10, volume_threshold=1.2):
     if len(df) < max(short_ma_period, long_ma_period):
@@ -20,7 +28,7 @@ def calculate_indicators(df, short_ma_period=10, long_ma_period=60, rsi_period=1
     df['EMA_20'] = ta.ema(df['close'], length=20)
     df['EMA_50'] = ta.ema(df['close'], length=50)
 
-    # Volume filtrado para evitar sinais em mercados sem volume
+    # Volume filtrado para sinais em mercados de menor volume
     df['Volume_Filter'] = df['volume'] > (volume_threshold * df['volume'].rolling(window=10).mean())
 
     # Verifica se os indicadores estão prontos para uso
@@ -37,14 +45,14 @@ def calculate_indicators(df, short_ma_period=10, long_ma_period=60, rsi_period=1
 
     return short_ma, long_ma, rsi, volume_filter, ema_20, ema_50
 
-def trading_decision(asset, price, portfolio_manager, df, volume_threshold=1.6):
+def trading_decision(asset, price, portfolio_manager, df, volume_threshold=1.4):
+    global last_buy_price, last_sell_price
     risk_manager = RiskManager(portfolio_manager)
     short_ma_period = 10
     long_ma_period = 70
     rsi_period = 10
     min_asset_quantity = 0.001
-    max_trade_amount = 0.05  # Máximo de 5% da carteira em cada operação para diversificação
-
+    max_trade_amount = 0.05
     base_asset = asset.replace('USDT', '')
 
     if len(df) < long_ma_period:
@@ -56,7 +64,7 @@ def trading_decision(asset, price, portfolio_manager, df, volume_threshold=1.6):
     if None in (short_ma, long_ma, rsi, volume_filter, ema_20, ema_50):
         return {'asset': asset, 'quantity': 0, 'price': price, 'type': 'hold', 'reason': "Indicators contain NaN values."}
 
-    # Pontuações para condições de compra e venda
+    # Pontuações para compra e venda
     buy_score = 0
     sell_score = 0
 
@@ -65,112 +73,80 @@ def trading_decision(asset, price, portfolio_manager, df, volume_threshold=1.6):
     # --------------------
     logger.info("Analisando condições de compra...")
 
-    # Volume alto - Máximo: 1 ponto
+    # Volume alto - Pontuação ajustada
     if volume_filter:
         buy_score += 1
-        logger.info("Condição de compra atendida: Volume alto. Pontuação: +1")
     else:
         volume_proximity = df['volume'].iloc[-1] / (volume_threshold * df['volume'].rolling(window=10).mean().iloc[-1])
-        buy_score += min(0.75 * volume_proximity, 0.75)  # Pontuação mais generosa para proximidade
-        logger.info(f"Volume próximo do limite, pontuação extra adicionada: +{min(0.75 * volume_proximity, 0.75):.2f}")
+        buy_score += min(0.5 * volume_proximity, 0.5)
 
-    # Short MA acima da Long MA - Máximo: 4 pontos
+    # Short MA acima da Long MA - Pontuação ajustada
     ma_distance = short_ma - long_ma
     if ma_distance > 0:
-        buy_score += min(4 * (ma_distance / long_ma), 4)
-        logger.info(f"Condição de compra atendida: Short MA acima da Long MA com distância {ma_distance:.2f}. Pontuação: +{min(4 * (ma_distance / long_ma), 4):.2f}")
+        buy_score += min(3 * (ma_distance / long_ma), 3)
     else:
-        proximity_score = min(2.5 * (1 - (abs(ma_distance) / long_ma)), 2.5)
+        proximity_score = min(1.5 * (1 - (abs(ma_distance) / long_ma)), 1.5)
         buy_score += proximity_score
-        logger.info(f"Short MA próximo da Long MA, pontuação extra adicionada: +{proximity_score:.2f}. Distância: {ma_distance:.2f}")
 
-    # EMA_20 acima da EMA_50 - Máximo: 3 pontos
+    # EMA_20 acima da EMA_50 - Pontuação ajustada
     ema_distance = ema_20 - ema_50
     if ema_distance > 0:
-        buy_score += min(3 * (ema_distance / ema_50), 3)
-        logger.info(f"Condição de compra atendida: EMA_20 acima da EMA_50 com distância {ema_distance:.2f}. Pontuação: +{min(3 * (ema_distance / ema_50), 3):.2f}")
+        buy_score += min(2 * (ema_distance / ema_50), 2)
     else:
-        proximity_score = min(2 * (1 - (abs(ema_distance) / ema_50)), 2)
+        proximity_score = min(1 * (1 - (abs(ema_distance) / ema_50)), 1)
         buy_score += proximity_score
-        logger.info(f"EMA_20 próximo da EMA_50, pontuação extra adicionada: +{proximity_score:.2f}. Distância: {ema_distance:.2f}")
 
-    # RSI baixo (< 55) - Máximo: 1 ponto
-    if rsi < 55:
-        buy_score += min(1 * ((55 - rsi) / 55), 1)
-        logger.info(f"Condição de compra atendida: RSI ({rsi}) abaixo de 55. Pontuação: +{min(1 * ((55 - rsi) / 55), 1):.2f}")
-    else:
-        proximity_score = min(0.75 * ((60 - rsi) / 60), 0.75)
-        buy_score += proximity_score
-        logger.info(f"RSI próximo do limite, pontuação extra adicionada: +{proximity_score:.2f}")
+    # RSI baixo (< 60) - Pontuação ajustada
+    if rsi < 60:
+        buy_score += min(0.75 * ((60 - rsi) / 60), 0.75)
 
-    # Saldo de caixa suficiente - Máximo: 1 ponto
+    # Saldo de caixa suficiente
     if portfolio_manager.get_cash_balance() > (price * min_asset_quantity):
         buy_score += 1
-        logger.info("Condição de compra atendida: Saldo de caixa suficiente. Pontuação: +1")
-    else:
-        logger.info("Condição de compra não atendida: Saldo de caixa insuficiente.")
 
     # --------------------
     # Condições de Venda
     # --------------------
     logger.info("Analisando condições de venda...")
 
-    # RSI alto (> 60) - Máximo: 2 pontos
+    # RSI alto (> 60) - Pontuação ajustada
     if rsi > 60:
-        sell_score += min(2 * ((rsi - 60) / 40), 2)
-        logger.info(f"Condição de venda atendida: RSI ({rsi}) acima de 60. Pontuação: +{min(2 * ((rsi - 60) / 40), 2):.2f}")
-    else:
-        proximity_score = min(1.5 * ((rsi - 55) / 60), 1.5) if rsi > 55 else 0
-        sell_score += proximity_score
-        logger.info(f"RSI próximo do limite, pontuação extra adicionada: +{proximity_score:.2f}")
+        sell_score += min(1.5 * ((rsi - 60) / 40), 1.5)
 
-    # Short MA abaixo da Long MA - Máximo: 4 pontos
+    # Short MA abaixo da Long MA - Pontuação ajustada
     if short_ma < long_ma:
-        sell_score += min(4 * (abs(short_ma - long_ma) / long_ma), 4)
-        logger.info(f"Condição de venda atendida: Short MA abaixo da Long MA com distância {short_ma - long_ma:.2f}. Pontuação: +{min(4 * (abs(short_ma - long_ma) / long_ma), 4):.2f}")
+        sell_score += min(3 * (abs(short_ma - long_ma) / long_ma), 3)
     else:
-        proximity_score = min(2.5 * (1 - (abs(short_ma - long_ma) / long_ma)), 2.5)
+        proximity_score = min(1.5 * (1 - (abs(short_ma - long_ma) / long_ma)), 1.5)
         sell_score += proximity_score
-        logger.info(f"Short MA próximo da Long MA, pontuação extra adicionada: +{proximity_score:.2f}")
 
-    # EMA_20 abaixo da EMA_50 - Máximo: 3 pontos
+    # EMA_20 abaixo da EMA_50 - Pontuação ajustada
     if ema_20 < ema_50:
-        sell_score += min(3 * (abs(ema_20 - ema_50) / ema_50), 3)
-        logger.info(f"Condição de venda atendida: EMA_20 abaixo da EMA_50 com distância {ema_20 - ema_50:.2f}. Pontuação: +{min(3 * (abs(ema_20 - ema_50) / ema_50), 3):.2f}")
+        sell_score += min(2 * (abs(ema_20 - ema_50) / ema_50), 2)
     else:
-        proximity_score = min(2 * (1 - (abs(ema_20 - ema_50) / ema_50)), 2)
+        proximity_score = min(1 * (1 - (abs(ema_distance) / ema_50)), 1)
         sell_score += proximity_score
-        logger.info(f"EMA_20 próximo da EMA_50, pontuação extra adicionada: +{proximity_score:.2f}")
 
-    # Quantidade suficiente para venda - Máximo: 1 ponto
+    # Quantidade suficiente para venda
     if portfolio_manager.get_balance(base_asset) > min_asset_quantity:
         sell_score += 1
-        logger.info("Condição de venda atendida: Quantidade suficiente para venda. Pontuação: +1")
-    else:
-        logger.info("Condição de venda não atendida: Quantidade mínima para venda não atingida.")
-
-    # Preço atual acima do preço médio de compra - Máximo: 1 ponto
-    if price > portfolio_manager.assets.get(base_asset, {}).get('average_cost', 0):
-        sell_score += 1
-        logger.info("Condição de venda atendida: Preço atual acima do preço médio de compra. Pontuação: +1")
-    else:
-        logger.info(f"Condição de venda não atendida: Preço atual ({price}) não é maior que o preço médio de compra.")
-
-    # Pontuação Máxima de Venda: 13 pontos
 
     # Define os limiares para compra e venda
-    buy_threshold = 6.5  # Ajustado para permitir compras em cenários próximos ao ideal
-    sell_threshold = 7  # Ajustado para permitir vendas em condições próximas ao ideal
+    buy_threshold = 4.0
+    sell_threshold = 5.0
 
-    # Determina o valor de compra e venda com base no saldo disponível
     cash_balance = portfolio_manager.get_cash_balance()
     asset_quantity = portfolio_manager.get_balance(base_asset)
     quantity_to_buy = min((cash_balance * portfolio_manager.get_investment_percentage()) / price, max_trade_amount * asset_quantity)
     quantity_to_sell = min(asset_quantity * portfolio_manager.get_investment_percentage(), asset_quantity - min_asset_quantity, max_trade_amount * asset_quantity)
 
-    # Executa a compra se a pontuação de compra for suficiente
+    # Estratégia de Compra
     if buy_score >= buy_threshold and cash_balance >= price * quantity_to_buy:
         logger.info(f"Condições de compra atendidas com pontuação total {buy_score}/{buy_threshold}")
+        
+        # Salva o preço de compra mais recente
+        last_buy_price = price
+        
         if risk_manager.can_trade(asset, 'buy', quantity_to_buy, price, df):
             return {
                 'asset': asset,
@@ -179,25 +155,42 @@ def trading_decision(asset, price, portfolio_manager, df, volume_threshold=1.6):
                 'type': 'buy',
                 'reason': f"Buy conditions met with score {buy_score}"
             }
-        else:
-            logger.info("Compra bloqueada pelo RiskManager.")
-    
-    # Executa a venda se a pontuação de venda for suficiente
+
+    # Estratégia de Venda com Meta de Lucro e Stop Loss
     if sell_score >= sell_threshold and asset_quantity >= min_asset_quantity:
         logger.info(f"Condições de venda atendidas com pontuação total {sell_score}/{sell_threshold}")
-        if risk_manager.can_trade(asset, 'sell', quantity_to_sell, price, df):
-            return {
-                'asset': asset,
-                'quantity': quantity_to_sell,
-                'price': price,
-                'type': 'sell',
-                'reason': f"Sell conditions met with score {sell_score}"
-            }
-        else:
-            logger.info("Venda bloqueada pelo RiskManager.")
 
-    # Mantém a posição caso as condições não sejam atingidas
-    logger.info(f"Nenhuma condição de compra ou venda foi suficientemente atendida (Pontuação de Compra: {buy_score}, Pontuação de Venda: {sell_score}). Mantendo posição.")
+        # Verifica o lucro ou perda potencial com base no preço de compra mais recente
+        if last_buy_price:
+            potential_profit = (price - last_buy_price) / last_buy_price
+            
+            # Condição de venda para garantir lucro
+            if potential_profit >= MIN_PROFIT_PERCENTAGE:
+                logger.info(f"Condição de lucro atendida: lucro de {potential_profit * 100:.2f}%")
+                last_sell_price = price
+                if risk_manager.can_trade(asset, 'sell', quantity_to_sell, price, df):
+                    return {
+                        'asset': asset,
+                        'quantity': quantity_to_sell,
+                        'price': price,
+                        'type': 'sell',
+                        'reason': f"Sell for profit with {potential_profit * 100:.2f}% profit"
+                    }
+            
+            # Condição de venda para stop loss
+            elif potential_profit <= -STOP_LOSS_PERCENTAGE:
+                logger.info(f"Condição de stop loss atingida: perda de {potential_profit * 100:.2f}%")
+                last_sell_price = price
+                if risk_manager.can_trade(asset, 'sell', quantity_to_sell, price, df):
+                    return {
+                        'asset': asset,
+                        'quantity': quantity_to_sell,
+                        'price': price,
+                        'type': 'sell',
+                        'reason': f"Sell for stop loss with {potential_profit * 100:.2f}% loss"
+                    }
+
+    logger.info(f"Posição mantida (Compra: {buy_score}, Venda: {sell_score}).")
     return {
         'asset': asset,
         'quantity': 0,

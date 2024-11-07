@@ -88,6 +88,38 @@ def get_asset_quantity(asset):
     except Exception as e:
         logger.error(f"Erro ao obter quantidade para o ativo {asset}: {e}")
         return 0.0
+    
+
+def get_price_trend(symbol, interval='1m', lookback=10):
+    """
+    Analisa a tendência de preços recentes para verificar se há um padrão de alta ou baixa.
+    Retorna 'up' se estiver em alta, 'down' se estiver em baixa, e 'neutral' se não houver tendência definida.
+    """
+    try:
+        # Obtem os dados históricos recentes para o cálculo de tendência
+        recent_data = client.get_klines(symbol=symbol, interval=interval, limit=lookback)
+        
+        if not isinstance(recent_data, list) or len(recent_data) < lookback:
+            logger.warning(f"Dados insuficientes para calcular tendência para {symbol}.")
+            return 'neutral'
+
+        # Extrai os preços de fechamento
+        closing_prices = [float(candle[4]) for candle in recent_data]
+        
+        # Calcula a média dos preços
+        price_change = sum(closing_prices[i+1] - closing_prices[i] for i in range(len(closing_prices) - 1)) / (len(closing_prices) - 1)
+        
+        if price_change > 0:
+            return 'up'
+        elif price_change < 0:
+            return 'down'
+        else:
+            return 'neutral'
+    except Exception as e:
+        logger.error(f"Erro ao obter tendência de preço para {symbol}: {e}")
+        return 'neutral'
+
+
 
 def get_account_balance():
     """Obtém o saldo atual da conta Binance e retorna como DataFrame."""
