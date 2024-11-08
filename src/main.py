@@ -102,6 +102,9 @@ async def realtime_trading_bot():
                 try:
                     result = await safe_execute_trade(decision['asset'], decision['quantity'], decision['type'].upper(), executor)
                     if result:
+                        # Obter o preço de mercado ou outras informações necessárias para o registro
+                        market_prices = {"price": decision['price']}  # Certifique-se de que contém os dados esperados
+
                         # Atualizar portfólio e registrar a transação
                         portfolio_manager.update_balance(
                             asset=decision['asset'],
@@ -109,7 +112,7 @@ async def realtime_trading_bot():
                             price=decision['price'],
                             transaction_type=decision['type']
                         )
-                        transaction_logger.record_transaction(decision, portfolio_manager)
+                        transaction_logger.record_transaction(decision, portfolio_manager, market_prices)
                         logger.info("Transação registrada no histórico.")
                     else:
                         logger.error("Erro ao executar a transação na Binance após várias tentativas.")

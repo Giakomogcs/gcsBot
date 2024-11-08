@@ -219,7 +219,7 @@ def execute_trade(asset, quantity, side, slippage_tolerance=0.01):
 def get_consecutive_trades(symbol, trade_type):
     """
     Recupera o número de transações consecutivas do tipo especificado (buy ou sell)
-    no histórico de ordens da Binance.
+    no histórico de ordens da Binance, começando a partir da última transação e parando ao encontrar uma transação oposta.
     """
     try:
         # Recupera o histórico de ordens para o símbolo
@@ -229,24 +229,72 @@ def get_consecutive_trades(symbol, trade_type):
             logger.error(f"Histórico de ordens não é do tipo lista: {type(orders)}")
             return 0
 
-        # Garante que trade_type está em minúsculas para evitar inconsistências
-        trade_type = trade_type.lower()
-
-        # Filtra apenas ordens preenchidas ('FILLED') e do tipo especificado
+        # Filtra apenas ordens preenchidas ('FILLED')
         filled_orders = [order for order in orders if order['status'] == 'FILLED']
 
-        # Conta as transações consecutivas do tipo especificado
+        # Inicia as contagens para compras e vendas consecutivas
         consecutive_count = 0
+
+        # Define o lado da última transação (baseando a contagem)
+        last_trade_type = filled_orders[-1]['side'].lower() if filled_orders else None
+
+        # Conta as transações consecutivas a partir da última
         for order in reversed(filled_orders):
-            # Verifica e conta apenas transações consecutivas do tipo correto
-            if order['side'].lower() == trade_type:
+            current_trade_type = order['side'].lower()
+            
+            if current_trade_type == trade_type:
                 consecutive_count += 1
             else:
-                # Interrompe a contagem ao encontrar uma transação de tipo oposto
+                # Encontra um tipo oposto; para a contagem de consecutivas
                 break
 
-        # Retorna o total de transações consecutivas do tipo especificado
+        # Retorna o total de transações consecutivas para o tipo especificado
         return consecutive_count
     except Exception as e:
         logger.error(f"Erro ao obter transações consecutivas para {symbol}: {e}")
         return 0
+
+
+
+def get_last_trade(symbol):
+    """
+    Obtém o preço e a quantidade da última compra e venda realizadas para o símbolo especificado.
+    """
+    try:
+        # Recupera o histórico de ordens para o símbolo
+        orders = client.get_all_orders(symbol=symbol, limit=100)
+
+        if not isinstance(orders, list):
+            logger.error(f"Histórico de ordens não é do tipo lista: {type(orders)}")
+            return None, None
+
+        # Filtra apenas ordens preenchidas ('FILLED')
+        filled_orders = [order for order in orders if order['status'] == 'FILLED']
+
+        # Inicializa variáveis para armazenar a última compra e venda
+        last_buy = None
+        last_sell = None
+
+        # Procura a última compra e a última venda
+        for order in reversed(filled_orders):
+            if order['side'].lower() == 'buy' and last_buy is None:
+                last_buy = {
+                    'price': float(order['price']),
+                    'quantity': float(order['origQty'])
+                }
+            elif order['side'].lower() == 'sell' and last_sell is None:
+                last_sell = {
+                    'price': float(order['price']),
+                    'quantity': float(order['origQty'])
+                }
+
+            # Se ambos foram encontrados, interrompe a busca
+            if last_buy and last_sell:
+                break
+
+        # Retorna as últimas transações de compra e venda
+        return last_buy, last_sell
+
+    except Exception as e:
+        logger.error(f"Erro ao obter última transação para {symbol}: {e}")
+        return None, None

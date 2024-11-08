@@ -8,7 +8,7 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %
 logger = logging.getLogger()
 
 class RiskManager:
-    def __init__(self, portfolio_manager, min_quantity=0.001, max_consecutive_trades=5, max_price_increase=0.05, max_price_drop=0.05):
+    def __init__(self, portfolio_manager, min_quantity=0.0001, max_consecutive_trades=5, max_price_increase=0.05, max_price_drop=0.05):
         self.portfolio_manager = portfolio_manager
         self.min_quantity = min_quantity
         self.max_consecutive_trades = max_consecutive_trades
