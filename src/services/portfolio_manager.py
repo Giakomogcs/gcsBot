@@ -33,9 +33,9 @@ class PortfolioManager:
         if self.investor_profile == 'conservador':
             return 0.03
         elif self.investor_profile == 'moderado':
-            return 0.05 if balance < 2000 else 0.1
+            return 0.05 if balance < 15000 else 0.1
         elif self.investor_profile == 'arrojado':
-            return 0.1 if balance < 2000 else 0.2
+            return 0.1 if balance < 30000 else 0.2
         else:
             return 0.05
 

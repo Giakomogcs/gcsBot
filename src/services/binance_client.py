@@ -181,40 +181,46 @@ def adjust_quantity(quantity, symbol):
     
     return adjusted_quantity
 
-def execute_trade(asset, quantity, side, slippage_tolerance=0.01):
-    """Envia uma ordem de compra ou venda para a Binance."""
-    try:
-        # Ajuste de quantidade para atender ao filtro LOT_SIZE
-        quantity = adjust_quantity(quantity, asset)
 
-        # Verificar o preço atual e calcular a tolerância de slippage
+def execute_trade(asset, quantity, side, slippage_tolerance=0.005):  # ajustado para 0.5%
+    try:
+        quantity = adjust_quantity(quantity, asset)
         current_price = get_realtime_price(asset)
+
         if current_price is None:
             raise ValueError(f"Preço atual não disponível para {asset}")
 
-        # Ajustar preço com base na tolerância de slippage
+        # Ajuste de preço com base na tolerância de slippage
         if side.lower() == 'buy':
             max_acceptable_price = current_price * (1 + slippage_tolerance)
-            logger.info(f"Executando ordem de COMPRA para {asset} com preço máximo aceitável: {max_acceptable_price:.2f}")
+            if current_price > max_acceptable_price:
+                logger.warning(f"Preço muito alto para compra. Evitando compra.")
+                return None
+
         elif side.lower() == 'sell':
             min_acceptable_price = current_price * (1 - slippage_tolerance)
-            logger.info(f"Executando ordem de VENDA para {asset} com preço mínimo aceitável: {min_acceptable_price:.2f}")
+            if current_price < min_acceptable_price:
+                logger.warning(f"Preço muito baixo para venda. Evitando venda.")
+                return None
 
-        # Enviar ordem de mercado
+        # Envia ordem
         order = client.order_market(
             symbol=asset,
-            side=side.upper(),  # 'BUY' ou 'SELL'
+            side=side.upper(),
             quantity=quantity
         )
+
         if not isinstance(order, dict):
-            logger.error(f"Ordem retornada não é do tipo esperado: {type(order)}")
+            logger.error(f"Ordem não é do tipo esperado: {type(order)}")
             return None
 
         logger.info(f"Ordem {side} executada com sucesso: {order}")
         return order
+
     except Exception as e:
         logger.error(f"Erro ao executar ordem {side} para {asset}: {e}")
         return None
+
 
 def get_consecutive_trades(symbol, trade_type):
     """
@@ -298,3 +304,27 @@ def get_last_trade(symbol):
     except Exception as e:
         logger.error(f"Erro ao obter última transação para {symbol}: {e}")
         return None, None
+
+def get_recent_prices(symbol, interval='1h', lookback_hours=5):
+    """
+    Obtém a média de preços de fechamento dos últimos 'lookback_hours' para o símbolo especificado.
+    """
+    try:
+        # Calcula a quantidade de velas necessárias
+        lookback_intervals = lookback_hours
+        klines = client.get_klines(symbol=symbol, interval=interval, limit=lookback_intervals)
+
+        if not isinstance(klines, list) or len(klines) < lookback_intervals:
+            logger.warning(f"Dados insuficientes para calcular média de preços recentes para {symbol}.")
+            return None
+
+        # Extrai os preços de fechamento e calcula a média
+        closing_prices = [float(candle[4]) for candle in klines]
+        recent_average_price = sum(closing_prices) / len(closing_prices)
+
+        logger.info(f"Média de preços recentes para {symbol} nos últimos {lookback_hours} horas: {recent_average_price}")
+        return recent_average_price
+
+    except Exception as e:
+        logger.error(f"Erro ao obter preços recentes para {symbol}: {e}")
+        return None

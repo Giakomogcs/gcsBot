@@ -9,6 +9,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.services.binance_client import get_realtime_price, get_historical_data, execute_trade
+from src.services.transaction_manager import get_last_transaction, load_transactions, save_transactions, add_transaction, get_average_price
 from src.services.portfolio_manager import PortfolioManager
 from src.services.transaction_logger import TransactionLogger
 from src.strategies.basic_strategy import trading_decision
@@ -20,6 +21,12 @@ logger = logging.getLogger()
 # Instancia o gerenciador de portfólio e o logger de transações
 portfolio_manager = PortfolioManager()
 transaction_logger = TransactionLogger(initial_balance=portfolio_manager.initial_balance)
+
+# Carrega as transações salvas
+transactions = load_transactions()
+
+
+save_transactions(transactions)  # Garante que o arquivo JSON é criado ao iniciar
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10), retry=retry_if_exception_type(ConnectionError))
 async def safe_get_realtime_price(asset, executor):
@@ -39,6 +46,7 @@ async def safe_execute_trade(asset, quantity, side, executor):
 async def realtime_trading_bot():
     asset = 'BTCUSDT'
     executor = ThreadPoolExecutor(max_workers=3)
+
 
     try:
         while True:
@@ -68,17 +76,6 @@ async def realtime_trading_bot():
                     logger.warning("Dados históricos não disponíveis ou DataFrame vazio. Tentando novamente em breve...")
                     await asyncio.sleep(10)
                     continue
-
-                # Verificar se as colunas necessárias estão presentes
-                required_columns = ['high', 'low', 'close']
-                for col in required_columns:
-                    if col not in df.columns:
-                        logger.error(f"Coluna necessária '{col}' ausente no DataFrame. Verifique a origem dos dados.")
-                        await asyncio.sleep(10)
-                        continue
-                
-                #print(df)
-
             except Exception as e:
                 logger.error(f"Erro ao obter dados históricos após várias tentativas: {e}")
                 await asyncio.sleep(10)
@@ -102,17 +99,18 @@ async def realtime_trading_bot():
                 try:
                     result = await safe_execute_trade(decision['asset'], decision['quantity'], decision['type'].upper(), executor)
                     if result:
-                        # Obter o preço de mercado ou outras informações necessárias para o registro
-                        market_prices = {"price": decision['price']}  # Certifique-se de que contém os dados esperados
+                        # Registrar transação nas listas de 5 últimos
+                        add_transaction(transactions, 'buys' if decision['type'] == 'buy' else 'sells', decision['price'])
 
-                        # Atualizar portfólio e registrar a transação
+                        # Atualizar portfólio e salvar transações
                         portfolio_manager.update_balance(
                             asset=decision['asset'],
                             quantity=decision['quantity'],
                             price=decision['price'],
                             transaction_type=decision['type']
                         )
-                        transaction_logger.record_transaction(decision, portfolio_manager, market_prices)
+                        save_transactions(transactions)  # Salva as transações atualizadas
+                        transaction_logger.record_transaction(decision, portfolio_manager, {"price": decision['price']})
                         logger.info("Transação registrada no histórico.")
                     else:
                         logger.error("Erro ao executar a transação na Binance após várias tentativas.")
@@ -130,12 +128,10 @@ async def realtime_trading_bot():
     except KeyboardInterrupt:
         logger.info("Interrupção do usuário detectada. Finalizando o bot...")
     except Exception as e:
-        # Em caso de exceção grave, exportar transações e tentar reiniciar o bot
         logger.critical(f"Erro inesperado no bot: {e}. Tentando reiniciar o bot em 30 segundos...")
         await asyncio.sleep(30)
         await realtime_trading_bot()
     finally:
-        # Exportar transações e finalizar recursos
         transaction_logger.export_to_excel()
         logger.info("Histórico salvo no Excel.")
         executor.shutdown(wait=True)
