@@ -81,9 +81,12 @@ def small_portfolio_strategy(asset, price, portfolio_manager, df, max_consecutiv
     # Limite de tempo para vendas recentes
     max_time_diff = timedelta(hours=12)
     recent_sell = False
-    if last_sell and 'time' in last_sell:
+    if isinstance(last_sell, dict) and 'time' in last_sell:
         last_sell_time = datetime.fromtimestamp(int(last_sell['time']))
         recent_sell = (datetime.now() - last_sell_time) < max_time_diff
+    else:
+        recent_sell = False
+
 
     # Condições adicionais baseadas nas médias curtas
     average_buy_price = get_average_price(transactions, "buys")
@@ -165,6 +168,8 @@ def small_portfolio_strategy(asset, price, portfolio_manager, df, max_consecutiv
         else:
             logger.info("Condições de compra não atendidas. Valores atuais: "
                         f"short_ma={short_ma}, long_ma={long_ma}, rsi={rsi}, price={price}, target_buy_price={target_buy_price}")
+    else:
+        logger.info(f"Condição de vompra não atingida: Limite de quantidade de compras")
 
     # Condições de venda
     if consecutive_sells < max_consecutive_sells:
@@ -187,6 +192,8 @@ def small_portfolio_strategy(asset, price, portfolio_manager, df, max_consecutiv
                 }
         else:
             logger.info(f"Condição de venda não atingida: preço atual ({price}) >= preço-alvo ({target_sell_price}).")
+    else:
+        logger.info(f"Condição de venda não atingida: Limite de quantidade de vendas")
 
     logger.info("Nenhuma transação realizada para carteira pequena.")
     return {
@@ -322,12 +329,5 @@ def trading_decision(asset, price, portfolio_manager, df):
     if asset_quantity < 0.06 or last_buy <= 0 or last_sell <= 0:
         return small_portfolio_strategy(asset, price, portfolio_manager, df)
     else:
-        short_ma, long_ma, rsi, volume_filter, ema_20, ema_50 = calculate_indicators(df)
-        indicators = {
-            'volume_score': 1 if volume_filter else min(df['volume'].iloc[-1] / (1.4 * df['volume'].rolling(window=10).mean().iloc[-1]), 0.5),
-            'ma_score': min(short_ma - long_ma / long_ma, 1) if short_ma > long_ma else 0,
-            'rsi': rsi,  # Incluindo o RSI diretamente
-            'sell_rsi_score': min((rsi - 60) / 40, 1) if rsi > 60 else 0,
-            'sell_ma_score': min(abs(short_ma - long_ma) / long_ma, 1) if short_ma < long_ma else 0,
-        }
-        return mature_portfolio_strategy(asset, price, portfolio_manager, df, indicators)
+
+        return small_portfolio_strategy(asset, price, portfolio_manager, df)

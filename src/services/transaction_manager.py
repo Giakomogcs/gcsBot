@@ -38,7 +38,7 @@ def add_transaction(transactions, transaction_type, price):
         transactions[transaction_type].append(transaction_data)
         
         # Garante que mantém apenas as 5 transações mais recentes
-        if len(transactions[transaction_type]) > 5:
+        if len(transactions[transaction_type]) > 6:
             transactions[transaction_type].pop(0)
     
     # Salva as transações
