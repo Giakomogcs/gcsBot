@@ -2,7 +2,7 @@ import json
 import os
 from services.binance_client import get_consecutive_trades, get_recent_prices
 from strategies.risk_manager import RiskManager
-from services.transaction_manager import clean_transactions_below_market_average, get_last_transaction_time, load_transactions, save_block_counts, save_transactions, add_transaction, get_average_price, get_last_transaction, load_block_counts
+from services.transaction_manager import get_last_transaction_time, load_transactions, save_transactions, add_transaction, get_average_price, get_last_transaction
 import pandas as pd
 import pandas_ta as ta
 import logging
@@ -19,7 +19,6 @@ min_asset_quantity = 0.0001  # Valor mínimo da Binance para negociação de BTC
 transactions = load_transactions()
 last_buy = get_last_transaction(transactions, 'buys')
 last_sell = get_last_transaction(transactions, 'sells')
-
 
 
 def calculate_indicators(df, short_ma_period=10, long_ma_period=150, rsi_period=12, volume_threshold=1.1):
@@ -64,27 +63,20 @@ def log_transaction_details(transaction_type, asset, quantity, price, profit=Non
 def calculate_profit(last_price, current_price):
     return (current_price - last_price) / last_price
 
-
-def small_portfolio_strategy(asset, price, portfolio_manager, df, max_consecutive_sells=5, max_consecutive_buys=5):
+def small_portfolio_strategy(asset, price, portfolio_manager, df, max_consecutive_sells=3, max_consecutive_buys=3):
     global last_buy, last_sell
-    consecutive_sell_blocks, consecutive_buy_blocks = load_block_counts()
-    print(f"consecutive_sell_blocks = {consecutive_sell_blocks}")
-    print(f"consecutive_buy_blocks = {consecutive_buy_blocks}")
 
     risk_manager = RiskManager(portfolio_manager)
     cash_balance = float(portfolio_manager.get_cash_balance())
     asset_quantity = float(portfolio_manager.get_balance(asset.replace('USDT', '')))
     price = float(price)
 
-    market_trend = risk_manager.determine_market_trend(df)
-    max_consecutive_trades = risk_manager.adapt_max_consecutive_trades(market_trend)
-
     consecutive_sells = get_consecutive_trades(asset, 'sell')
     consecutive_buys = get_consecutive_trades(asset, 'buy')
 
-    MIN_PROFIT_PERCENTAGE = 0.0015  # 0,15% de lucro
-    STOP_LOSS_PERCENTAGE = 0.0018  # 0,18% de perda
-    THRESHOLD_FACTOR = 0.97
+    MIN_PROFIT_PERCENTAGE = 0.0015  # 0,25% de lucro
+    STOP_LOSS_PERCENTAGE = 0.0018  # 0,4% de perda
+
 
     # Limite de tempo para vendas recentes
     max_time_diff = timedelta(hours=12)
@@ -106,78 +98,67 @@ def small_portfolio_strategy(asset, price, portfolio_manager, df, max_consecutiv
 
     print(f"recent_sell={recent_sell}, recent_buy={recent_buy}")
 
-    # Obter os indicadores e verificar a validade
-    short_ma, long_ma, rsi, volume_filter, _, _ = calculate_indicators(df)
-    clean_transactions_below_market_average(transactions, short_ma, THRESHOLD_FACTOR)
 
-    # Calcular médias curtas de compra e venda
+    # Condições adicionais baseadas nas médias curtas
     average_buy_price = get_average_price(transactions, "buys")
     average_sell_price = get_average_price(transactions, "sells")
 
-    # Inicializando target_sell_price e target_buy_price
-    target_sell_price = 0
-    target_buy_price = 0
-
-
-
-    # Lógica para determinar se a condição de broke cold está atendida
-    if not recent_sell and average_buy_price < price or consecutive_buy_blocks >= 100 and last_sell <= 0 :
-        sell_broke_cold = True
-        buy_broke_cold = False
+    # Definindo target_sell_price e target_buy_price com verificação inicial de recent_sell e recent_buy
+    if not recent_sell or not recent_buy:
         target_sell_price = 0
-        logger.info("Condição sell_broke_cold atendida: average_buy_price é menor que o preço atual. target_sell_price e target_buy_price definidos como 0.")
-    elif not recent_buy and average_sell_price > price or consecutive_sell_blocks >= 100 and last_buy <= 0:
-        buy_broke_cold = True
-        sell_broke_cold = False
         target_buy_price = 0
-        logger.info("Condição buy_broke_cold atendida: average_sell_price é maior que o preço atual. target_sell_price e target_buy_price definidos como 0.")
     else:
-        # Condições para cálculo de target_sell_price
-        sell_broke_cold = False
-        buy_broke_cold = False
-        logger.info("Nenhuma condição 'broke cold' atendida. Calculando target_sell_price e target_buy_price.")
-
         # Definindo target_sell_price
         if average_buy_price > 0 and last_buy > 0:
             target_sell_price = average_buy_price * (1 + MIN_PROFIT_PERCENTAGE)
-            logger.info(f"target_sell_price calculado com average_buy_price: {target_sell_price}")
         elif last_buy > 0:
             target_sell_price = last_buy * (1 + MIN_PROFIT_PERCENTAGE)
-            logger.info(f"target_sell_price calculado com last_buy: {target_sell_price}")
         else:
             target_sell_price = 0
-            logger.info("target_sell_price definido como 0, pois não há dados de compra suficientes.")
 
         # Definindo target_buy_price
         if average_sell_price > 0 and last_sell > 0:
             target_buy_price = average_sell_price * (1 - 2 * STOP_LOSS_PERCENTAGE)
-            logger.info(f"target_buy_price calculado com average_sell_price: {target_buy_price}")
         elif last_sell > 0:
             target_buy_price = last_sell * (1 - 2 * STOP_LOSS_PERCENTAGE)
-            logger.info(f"target_buy_price calculado com last_sell: {target_buy_price}")
         else:
             target_buy_price = 0
-            logger.info("target_buy_price definido como 0, pois não há dados de venda suficientes.")
 
-    # Logs para verificar as condições finais de broke cold
-    logger.info(f"Condições finais - buy_broke_cold: {buy_broke_cold}, sell_broke_cold: {sell_broke_cold}")
+
+    # Lógica para as variáveis booleanas broke ice
+    if target_buy_price == 0 and average_sell_price > price:
+        buy_broke_cold = True
+        sell_broke_cold = False
+        logger.info("Condição buy_broke_cold atendida: average_sell_price é maior que o preço atual")
+    elif target_sell_price == 0 and average_buy_price < price:
+        sell_broke_cold = True
+        buy_broke_cold = False
+        logger.info("Condição sell_broke_cold atendida: average_buy_price é menor que o preço atual")
+    else:
+        buy_broke_cold = False
+        sell_broke_cold = False
+        logger.info("Nenhuma condição 'broke cold' atendida.")
+
+    # Logs para verificar as condições finais
+    logger.info(f"buy_broke_cold: {buy_broke_cold}, sell_broke_cold: {sell_broke_cold}")
     logger.info(f"target_buy_price: {target_buy_price}, target_sell_price: {target_sell_price}")
 
-    # Integração com get_recent_prices para obter média de curto prazo caso não haja histórico suficiente
+
+    # Integração com get_recent_prices para obter média de curto prazo se não houver histórico suficiente
     if (average_buy_price <= 0 or last_buy <= 0 or not last_buy_time) and not buy_broke_cold:
-        logger.info("Nenhum registro recente de compra disponível no JSON. Usando média de preços recentes para average_buy_price.")
+        logger.info("Nenhum registro recente de compra disponível no JSON. Usando média de preços recentes.")
         average_buy_price = get_recent_prices(asset)
 
-    if (average_sell_price <= 0 or last_sell <= 0 or not last_sell_time) and not sell_broke_cold:
-        logger.info("Nenhum registro recente de venda disponível no JSON. Usando média de preços recentes para average_sell_price.")
+    elif (average_sell_price <= 0 or last_sell <= 0 or not last_sell_time) and not sell_broke_cold:
+        logger.info("Nenhum registro recente de venda disponível no JSON. Usando média de preços recentes.")
         average_sell_price = get_recent_prices(asset)
-
 
 
     logger.info("Estratégia Small Portfolio ativada.")
     logger.info(f"Condições de compra: target_buy_price={target_buy_price}, recent_sell={recent_sell}, consecutive_buys={consecutive_buys}")
 
-    
+    # Obter os indicadores e verificar a validade
+    short_ma, long_ma, rsi, volume_filter, _, _ = calculate_indicators(df)
     logger.info(f"Indicadores: short_ma={short_ma}, long_ma={long_ma}, rsi={rsi}, volume_filter={volume_filter}")
 
     if None in (short_ma, long_ma, rsi, volume_filter):
@@ -191,7 +172,7 @@ def small_portfolio_strategy(asset, price, portfolio_manager, df, max_consecutiv
         }
 
     # Condições de compra aprimoradas
-    if consecutive_buys < max_consecutive_trades or consecutive_sell_blocks >= 100:
+    if consecutive_buys < max_consecutive_buys:
         if short_ma < long_ma * 0.995 or rsi < 50 or (recent_sell and price <= target_buy_price) or buy_broke_cold and not sell_broke_cold:
             quantity_to_buy = min((cash_balance * portfolio_manager.get_investment_percentage()) / price, 
                                   portfolio_manager.get_investment_percentage() * asset_quantity)
@@ -200,10 +181,6 @@ def small_portfolio_strategy(asset, price, portfolio_manager, df, max_consecutiv
             logger.info(f"Valores de compra: quantity_to_buy={quantity_to_buy}, price={price}, cash_balance={cash_balance}")
             if float(quantity_to_buy) >= min_asset_quantity and risk_manager.can_trade(asset, 'buy', float(quantity_to_buy), price, df):
                 add_transaction(transactions, "buys", price)
-                consecutive_buy_blocks = 0
-                consecutive_sell_blocks = 0
-                save_block_counts(consecutive_sell_blocks, consecutive_buy_blocks)
-
                 logger.info("Condições de compra atendidas. Executando compra.")
                 log_transaction_details("compra", asset, quantity_to_buy, price)
                 return {
@@ -217,13 +194,10 @@ def small_portfolio_strategy(asset, price, portfolio_manager, df, max_consecutiv
             logger.info("Condições de compra não atendidas. Valores atuais: "
                         f"short_ma={short_ma}, long_ma={long_ma}, rsi={rsi}, price={price}, target_buy_price={target_buy_price}")
     else:
-        consecutive_buy_blocks += 1
-        consecutive_sell_blocks = 0
-        save_block_counts(consecutive_sell_blocks, consecutive_buy_blocks)
         logger.info(f"Condição de vompra não atingida: Limite de quantidade de compras")
 
     # Condições de venda
-    if consecutive_sells < max_consecutive_trades or consecutive_buy_blocks >= 100:
+    if consecutive_sells < max_consecutive_sells:
         if price >= target_sell_price or not buy_broke_cold and sell_broke_cold:
             quantity_to_sell = min(asset_quantity * portfolio_manager.get_investment_percentage(), asset_quantity - min_asset_quantity)
             quantity_to_sell = format_quantity(max(quantity_to_sell, min_asset_quantity))
@@ -232,9 +206,6 @@ def small_portfolio_strategy(asset, price, portfolio_manager, df, max_consecutiv
             if float(quantity_to_sell) >= min_asset_quantity and risk_manager.can_trade(asset, 'sell', float(quantity_to_sell), price, df):
                 profit = calculate_profit(last_buy, price) if last_buy else 0
                 add_transaction(transactions, "sells", price)
-                consecutive_buy_blocks = 0
-                consecutive_sell_blocks = 0
-                save_block_counts(consecutive_sell_blocks, consecutive_buy_blocks)
                 logger.info(f"Venda realizada com lucro de {profit*100:.2f}%.")
                 log_transaction_details("venda", asset, quantity_to_sell, price, profit)
                 return {
@@ -247,9 +218,6 @@ def small_portfolio_strategy(asset, price, portfolio_manager, df, max_consecutiv
         else:
             logger.info(f"Condição de venda não atingida: preço atual ({price}) >= preço-alvo ({target_sell_price}).")
     else:
-        consecutive_sell_blocks += 1
-        consecutive_buy_blocks = 0
-        save_block_counts(consecutive_sell_blocks, consecutive_buy_blocks)
         logger.info(f"Condição de venda não atingida: Limite de quantidade de vendas")
 
     logger.info("Nenhuma transação realizada para carteira pequena.")

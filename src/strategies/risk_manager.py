@@ -3,6 +3,8 @@ from services.portfolio_manager import PortfolioManager
 import pandas as pd
 import logging
 
+from services.transaction_manager import load_block_counts, save_block_counts
+
 # Configuração do logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger()
@@ -41,6 +43,33 @@ class RiskManager:
             logger.error(f"Erro ao calcular preço médio: {e}")
             return 0
 
+
+    def calculate_average_price(self, symbol, transaction_type, recent_only=True, recent_limit=10):
+        try:
+            orders = client.get_all_orders(symbol=symbol, limit=100)
+            relevant_orders = [
+                order for order in orders 
+                if isinstance(order, dict) and order.get('status') == 'FILLED' and order.get('side', '').lower() == transaction_type
+            ]
+
+            if recent_only and len(relevant_orders) > recent_limit:
+                relevant_orders = relevant_orders[-recent_limit:]
+
+            if relevant_orders:
+                prices = [float(order['price']) for order in relevant_orders if 'price' in order]
+                if not prices:
+                    logger.warning("Nenhuma ordem relevante contém 'price'.")
+                    return 0
+                average_price = sum(prices) / len(prices)
+                logger.debug(f"Preço médio calculado para {transaction_type} de {symbol}: {average_price:.2f}")
+                return average_price
+            else:
+                logger.debug(f"Nenhuma ordem relevante encontrada para {transaction_type} de {symbol}.")
+                return 0
+        except Exception as e:
+            logger.error(f"Erro ao calcular preço médio: {e}")
+            return 0
+
     def determine_market_trend(self, df):
         try:
             if not isinstance(df, pd.DataFrame):
@@ -51,17 +80,29 @@ class RiskManager:
                 logger.error(f"Coluna 'close' ausente no DataFrame. Colunas disponíveis: {df.columns}")
                 return 'neutral'
 
+            # Verifica se o DataFrame tem dados suficientes para calcular as médias móveis
+            if len(df) < 50:
+                logger.warning("Dados insuficientes no DataFrame para calcular médias móveis. Retornando tendência 'neutral'.")
+                return 'neutral'
+
+            # Calcula médias móveis
             short_ma = df['close'].rolling(window=10).mean().iloc[-1]
             long_ma = df['close'].rolling(window=50).mean().iloc[-1]
+            long_term_ma = df['close'].rolling(window=200).mean().iloc[-1] if len(df) >= 200 else None
 
             if pd.isna(short_ma) or pd.isna(long_ma):
                 logger.error("As médias móveis calculadas contêm valores NaN. Verifique o DataFrame.")
                 return 'neutral'
 
+            # Identifica a tendência baseada em médias móveis
             if short_ma > long_ma:
+                if long_term_ma and short_ma > long_term_ma:
+                    logger.debug(f"Tendência de longo prazo bullish confirmada (short_ma={short_ma:.2f}, long_term_ma={long_term_ma:.2f})")
                 logger.debug(f"Tendência do mercado: bullish (short_ma={short_ma:.2f}, long_ma={long_ma:.2f})")
                 return 'bullish'
             elif short_ma < long_ma:
+                if long_term_ma and short_ma < long_term_ma:
+                    logger.debug(f"Tendência de longo prazo bearish confirmada (short_ma={short_ma:.2f}, long_term_ma={long_term_ma:.2f})")
                 logger.debug(f"Tendência do mercado: bearish (short_ma={short_ma:.2f}, long_ma={long_ma:.2f})")
                 return 'bearish'
             else:
@@ -75,13 +116,21 @@ class RiskManager:
         if market_trend == 'bearish':
             self.max_consecutive_trades = 7
         elif market_trend == 'bullish':
-            self.max_consecutive_trades = 3
-        else:
             self.max_consecutive_trades = 5
+        else:
+            self.max_consecutive_trades = 3
 
         logger.debug(f"Max consecutive trades ajustado para {self.max_consecutive_trades} com base na tendência de mercado '{market_trend}'")
 
+        return self.max_consecutive_trades
+
+
+
+
+
     def can_trade(self, symbol, transaction_type, quantity, price, df):
+        consecutive_sell_blocks, consecutive_buy_blocks = load_block_counts()
+
         try:
             stop_status = self.portfolio_manager.check_stop_loss_take_profit()
             if stop_status != 'continue':
@@ -106,8 +155,19 @@ class RiskManager:
 
             logger.debug(f"Transações consecutivas de tipo '{transaction_type}' para {symbol}: {consecutive_trades}")
 
+
             if consecutive_trades >= self.max_consecutive_trades:
-                logger.info(f"Limite de {transaction_type}s consecutivas atingido. Operação ignorada.")
+                if transaction_type == 'sell':
+                    consecutive_sell_blocks += 1
+                    consecutive_buy_blocks = 0
+                    save_block_counts(consecutive_sell_blocks, consecutive_buy_blocks)
+
+                if transaction_type == 'buy':
+                    consecutive_buy_blocks += 1
+                    consecutive_sell_blocks = 0
+                    save_block_counts(consecutive_sell_blocks, consecutive_buy_blocks)
+
+                logger.info(f"Limite de {transaction_type}s consecutivas atingido. limite = {self.max_consecutive_trades} Operação ignorada.")
                 return False
 
             average_price = self.calculate_average_price(symbol, transaction_type, recent_only=(market_trend == 'bearish'))
