@@ -2,7 +2,7 @@ import json
 import os
 from services.binance_client import get_consecutive_trades, get_recent_prices
 from strategies.risk_manager import RiskManager
-from services.transaction_manager import clean_transactions_below_market_average, get_last_transaction_time, load_transactions, save_block_counts, save_transactions, add_transaction, get_average_price, get_last_transaction, load_block_counts
+from services.transaction_manager import clean_transactions_outside_market_average, get_last_transaction_time, load_transactions, save_block_counts, save_transactions, add_transaction, get_average_price, get_last_transaction, load_block_counts
 import pandas as pd
 import pandas_ta as ta
 import logging
@@ -84,10 +84,10 @@ def small_portfolio_strategy(asset, price, portfolio_manager, df, max_consecutiv
 
     MIN_PROFIT_PERCENTAGE = 0.0015  # 0,15% de lucro
     STOP_LOSS_PERCENTAGE = 0.0018  # 0,18% de perda
-    THRESHOLD_FACTOR = 0.97
+    THRESHOLD_FACTOR = 0.985
 
     # Limite de tempo para vendas recentes
-    max_time_diff = timedelta(hours=12)
+    max_time_diff = timedelta(hours=4)
     # Obtém o horário da última venda
     last_sell_time = get_last_transaction_time(transactions, 'sells')
     
@@ -108,7 +108,7 @@ def small_portfolio_strategy(asset, price, portfolio_manager, df, max_consecutiv
 
     # Obter os indicadores e verificar a validade
     short_ma, long_ma, rsi, volume_filter, _, _ = calculate_indicators(df)
-    clean_transactions_below_market_average(transactions, short_ma, THRESHOLD_FACTOR)
+    clean_transactions_outside_market_average(transactions, short_ma, THRESHOLD_FACTOR, recent_sell, recent_buy, price)
 
     # Calcular médias curtas de compra e venda
     average_buy_price = get_average_price(transactions, "buys")
@@ -192,7 +192,7 @@ def small_portfolio_strategy(asset, price, portfolio_manager, df, max_consecutiv
 
     # Condições de compra aprimoradas
     if consecutive_buys < max_consecutive_trades or consecutive_sell_blocks >= 100:
-        if short_ma < long_ma * 0.995 or rsi < 50 or (recent_sell and price <= target_buy_price) or buy_broke_cold and not sell_broke_cold:
+        if (short_ma < long_ma * 0.995) or rsi < 50 or (recent_sell and price <= target_buy_price) or buy_broke_cold and not sell_broke_cold:
             quantity_to_buy = min((cash_balance * portfolio_manager.get_investment_percentage()) / price, 
                                   portfolio_manager.get_investment_percentage() * asset_quantity)
             quantity_to_buy = format_quantity(max(quantity_to_buy, min_asset_quantity))

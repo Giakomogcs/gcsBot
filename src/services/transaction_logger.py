@@ -115,13 +115,15 @@ class TransactionLogger:
             return  # Nada para gravar
 
         try:
-            df = pd.DataFrame(self.transaction_buffer)
-
+            # Carrega o arquivo e verifica se existe a aba onde vamos escrever
             with pd.ExcelWriter(self.file_name, engine='openpyxl', mode='a', if_sheet_exists='overlay') as writer:
-                workbook = load_workbook(self.file_name)
-                sheet = workbook.active
-                start_row = sheet.max_row
+                df = pd.DataFrame(self.transaction_buffer)
+                workbook = writer.book
+                if 'Sheet1' not in workbook.sheetnames:
+                    self.create_initial_file()
 
+                sheet = writer.sheets.get('Sheet1')
+                start_row = sheet.max_row if sheet else 1
                 df.to_excel(writer, index=False, header=False, startrow=start_row)
 
             # Limpa o buffer após salvar

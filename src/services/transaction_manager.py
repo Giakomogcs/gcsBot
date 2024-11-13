@@ -62,27 +62,47 @@ def get_last_transaction_time(transactions, transaction_type):
         return transactions[transaction_type][-1].get('time', 0)  # Retorna apenas o valor de 'time'
     return 0  # Retorna 0 se não houver transações do tipo solicitado
 
-def clean_transactions_below_market_average(transactions, MARKET_AVERAGE, THRESHOLD_FACTOR):
-    """Remove transações do histórico se a média de preços de compra ou venda estiver muito abaixo da média do mercado."""
+from datetime import datetime
+
+def clean_transactions_outside_market_average(transactions, MARKET_AVERAGE, THRESHOLD_FACTOR, recent_sell, recent_buy, price):
+    """
+    Remove transações do histórico se a média de preços de compra ou venda estiver muito
+    abaixo ou muito acima da média do mercado.
+    """
     # Calcula a média de compras e vendas no histórico
     average_buy_price = get_average_price(transactions, 'buys')
     average_sell_price = get_average_price(transactions, 'sells')
     
-    # Verifica se a média de compras está muito abaixo da média do mercado
-    if average_buy_price and average_buy_price < MARKET_AVERAGE * THRESHOLD_FACTOR:
+    # Verifica se a média de compras está muito abaixo ou acima da média do mercado
+    if average_buy_price:
+        if average_buy_price < MARKET_AVERAGE * THRESHOLD_FACTOR:
+            transactions['buys'] = [{"price": 0.0, "time": datetime.now().timestamp()}]  # Limpa todas as transações de compra
+            print("Histórico de compras muito abaixo da média do mercado. Transações de compra foram limpas.")
+        elif average_buy_price > MARKET_AVERAGE / THRESHOLD_FACTOR:
+            transactions['buys'] = [{"price": 0.0, "time": datetime.now().timestamp()}]  # Limpa todas as transações de compra
+            print("Histórico de compras muito acima da média do mercado. Transações de compra foram limpas.")
+
+    if not recent_buy:
         transactions['buys'] = [{"price": 0.0, "time": datetime.now().timestamp()}]  # Limpa todas as transações de compra
-        print("Histórico de compras muito abaixo da média do mercado. Transações de compra foram limpas.")
+        print("Histórico de compras desatualizado. Transações de compra foram limpas.")
+
+
     
-    # Verifica se a média de vendas está muito abaixo da média do mercado
-    if average_sell_price and average_sell_price < MARKET_AVERAGE * THRESHOLD_FACTOR:
+    # Verifica se a média de vendas está muito abaixo ou acima da média do mercado
+    if average_sell_price:
+        if average_sell_price < MARKET_AVERAGE * THRESHOLD_FACTOR:
+            transactions['sells'] = [{"price": 0.0, "time": datetime.now().timestamp()}]  # Limpa todas as transações de venda
+            print("Histórico de vendas muito abaixo da média do mercado. Transações de venda foram limpas.")
+        elif average_sell_price > MARKET_AVERAGE / THRESHOLD_FACTOR:
+            transactions['sells'] = [{"price": 0.0, "time": datetime.now().timestamp()}]  # Limpa todas as transações de venda
+            print("Histórico de vendas muito acima da média do mercado. Transações de venda foram limpas.")
+
+    if not recent_sell :
         transactions['sells'] = [{"price": 0.0, "time": datetime.now().timestamp()}]  # Limpa todas as transações de venda
-        print("Histórico de vendas muito abaixo da média do mercado. Transações de venda foram limpas.")
+        print("Histórico de vendas desatualizado. Transações de venda foram limpas.")
     
     # Salva o JSON atualizado após a limpeza
     save_transactions(transactions)
-
-
-
 
 
 
