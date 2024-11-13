@@ -121,12 +121,12 @@ def small_portfolio_strategy(asset, price, portfolio_manager, df, max_consecutiv
 
 
     # Lógica para determinar se a condição de broke cold está atendida
-    if not recent_sell and average_buy_price < price or consecutive_buy_blocks >= 100 and last_sell <= 0 :
+    if ((not recent_sell or (last_buy == 0 and last_sell == 0)) and average_buy_price < price) or consecutive_buy_blocks >= 100 and last_sell <= 0 :
         sell_broke_cold = True
         buy_broke_cold = False
         target_sell_price = 0
         logger.info("Condição sell_broke_cold atendida: average_buy_price é menor que o preço atual. target_sell_price e target_buy_price definidos como 0.")
-    elif not recent_buy and average_sell_price > price or consecutive_sell_blocks >= 100 and last_buy <= 0:
+    elif ((not recent_buy or (last_buy == 0 and last_sell == 0))  and average_sell_price > price) or consecutive_sell_blocks >= 100 and last_buy <= 0:
         buy_broke_cold = True
         sell_broke_cold = False
         target_buy_price = 0
