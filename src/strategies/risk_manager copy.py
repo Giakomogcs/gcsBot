@@ -123,79 +123,77 @@ class RiskManager:
         logger.debug(f"Max consecutive trades ajustado para {self.max_consecutive_trades} com base na tendência de mercado '{market_trend}'")
 
         return self.max_consecutive_trades
-    
-    
+
+
+
+
 
     def can_trade(self, symbol, transaction_type, quantity, price, df):
         consecutive_sell_blocks, consecutive_buy_blocks = load_block_counts()
 
         try:
-            # Verifica se o stop-loss ou take-profit geral está ativo
             stop_status = self.portfolio_manager.check_stop_loss_take_profit()
             if stop_status != 'continue':
-                logger.info(f"Operação bloqueada devido ao status global: {stop_status}")
+                logger.info(f"Operação bloqueada devido ao status: {stop_status}")
                 return False
 
-            # Verifica se a venda deixaria menos do que a quantidade mínima permitida
             if transaction_type == 'sell' and (self.portfolio_manager.get_balance(symbol.replace('USDT', '')) - quantity) < self.min_quantity:
-                logger.info(f"Venda bloqueada: não podemos vender {quantity}, pois deixaria menos do que o mínimo permitido ({self.min_quantity}).")
+                logger.info("Operação de venda cancelada: reserva mínima de ativo não atingida.")
                 return False
 
-            # Verifica se a compra comprometeria a reserva de caixa
             if transaction_type == 'buy' and self.portfolio_manager.get_cash_balance() < self.portfolio_manager.reserve_cash + (quantity * price):
-                logger.info(f"Compra bloqueada: saldo insuficiente após manter a reserva de caixa necessária.")
+                logger.info("Operação de compra cancelada: saldo insuficiente para manter a reserva mínima de caixa.")
                 return False
 
-            # Adapta o limite de transações consecutivas com base na tendência de mercado
             market_trend = self.determine_market_trend(df)
             self.adapt_max_consecutive_trades(market_trend)
 
-            # Verifica o número de transações consecutivas
             consecutive_trades = get_consecutive_trades(symbol, transaction_type)
+            if not isinstance(consecutive_trades, int):
+                logger.error(f"consecutive_trades não é um inteiro: {consecutive_trades}")
+                return False
+
+            logger.debug(f"Transações consecutivas de tipo '{transaction_type}' para {symbol}: {consecutive_trades}")
+
+
             if consecutive_trades >= self.max_consecutive_trades:
                 if transaction_type == 'sell':
                     consecutive_sell_blocks += 1
                     consecutive_buy_blocks = 0
+                    save_block_counts(consecutive_sell_blocks, consecutive_buy_blocks)
+
                 if transaction_type == 'buy':
                     consecutive_buy_blocks += 1
                     consecutive_sell_blocks = 0
-                save_block_counts(consecutive_sell_blocks, consecutive_buy_blocks)
+                    save_block_counts(consecutive_sell_blocks, consecutive_buy_blocks)
 
-                logger.info(f"Transação bloqueada: limite de {transaction_type}s consecutivas atingido ({self.max_consecutive_trades}).")
+                logger.info(f"Limite de {transaction_type}s consecutivas atingido. limite = {self.max_consecutive_trades} Operação ignorada.")
                 return False
 
-            # Calcula preço médio de transações recentes
             average_price = self.calculate_average_price(symbol, transaction_type, recent_only=(market_trend == 'bearish'))
 
-            # Verifica condições de compra
             if transaction_type == 'buy':
                 if average_price > 0 and price > average_price:
                     if market_trend != 'bullish':
-                        logger.info(f"Compra bloqueada: preço atual ({price:.2f}) acima da média ({average_price:.2f}) em mercado não otimista.")
+                        logger.info(f"Preço de compra acima da média de compras ({average_price:.2f}). Aguardando queda para melhores oportunidades.")
                         return False
 
                 if average_price > 0 and (average_price - price) / average_price > self.max_price_increase:
-                    logger.info(f"Compra bloqueada: queda excessiva detectada. Evitando pegar um 'falling knife'.")
+                    logger.info(f"Queda excessiva detectada. Evitando comprar para não 'catching a falling knife'.")
                     return False
 
-            # Verifica condições de venda
             if transaction_type == 'sell':
                 if average_price > 0 and price < average_price and market_trend != 'bearish':
-                    logger.info(f"Venda bloqueada: preço atual ({price:.2f}) abaixo da média ({average_price:.2f}) em mercado não pessimista.")
+                    logger.info(f"Preço atual abaixo da média de vendas ({average_price:.2f}). Esperando um valor melhor.")
                     return False
 
                 previous_close_price = self.portfolio_manager.get_previous_close_price(symbol)
                 if previous_close_price > 0 and (previous_close_price - price) / previous_close_price > self.max_price_drop:
-                    logger.info(f"Venda bloqueada: queda rápida detectada. Evitando venda durante pânico.")
+                    logger.info(f"Queda rápida detectada. Evitando vender durante pânico.")
                     return False
 
-            # Se todas as condições foram atendidas
-            logger.debug(f"Transação permitida para {transaction_type} de {symbol}. Quantidade: {quantity}, Preço: {price:.2f}")
+            logger.debug(f"Negociação permitida para {transaction_type} de {symbol} com quantidade {quantity} a preço {price:.2f}")
             return True
         except Exception as e:
             logger.error(f"Erro ao determinar se a negociação pode ser feita: {e}")
             return False
-
-
-
-
