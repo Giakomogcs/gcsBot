@@ -1,14 +1,12 @@
 import json
 import os
 from services.binance_client import get_consecutive_trades, get_recent_prices
-
 from strategies.risk_manager import RiskManager
 from services.transaction_manager import clean_transactions_outside_market_average, get_last_transaction_time, load_transactions, save_block_counts, save_transactions, add_transaction, get_average_price, get_last_transaction, load_block_counts
 import pandas as pd
 import pandas_ta as ta
 import logging
 from datetime import datetime, timedelta
-
 
 # Configuração do logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -24,49 +22,34 @@ last_sell = get_last_transaction(transactions, 'sells')
 
 
 
-def calculate_indicators(df, short_ma_period=10, long_ma_period=150, rsi_period=12, volume_threshold=1.1, atr_period=14, adx_period=14):
-    if len(df) < max(short_ma_period, long_ma_period, atr_period, adx_period):
+def calculate_indicators(df, short_ma_period=10, long_ma_period=150, rsi_period=12, volume_threshold=1.1):
+    if len(df) < max(short_ma_period, long_ma_period):
         logger.warning("Dados insuficientes para calcular todos os indicadores. Aguardando mais dados...")
-        return None, None, None, None, None, None, None, None
+        return None, None, None, None, None, None
 
-    # Calcula os indicadores
+    # Calcula as Médias Móveis e RSI
     df['SMA_10'] = ta.sma(df['close'], length=short_ma_period)
     df['SMA_60'] = ta.sma(df['close'], length=long_ma_period)
     df['RSI'] = ta.rsi(df['close'], length=rsi_period)
     df['EMA_20'] = ta.ema(df['close'], length=20)
     df['EMA_50'] = ta.ema(df['close'], length=50)
-    df['ATR'] = ta.atr(df['high'], df['low'], df['close'], length=atr_period)
 
-    # Calcular ADX e selecionar apenas a coluna "ADX"
-    adx_df = ta.adx(df['high'], df['low'], df['close'], length=adx_period)
-    if isinstance(adx_df, pd.DataFrame) and 'ADX_14' in adx_df.columns:  # Ajuste para o nome da coluna padrão
-        df['ADX'] = adx_df['ADX_14']
-    else:
-        df['ADX'] = None
-        logger.warning("Erro ao calcular o ADX. Dados insuficientes ou formato inesperado.")
-
+    # Volume filtrado para sinais em mercados de menor volume
     df['Volume_Filter'] = df['volume'] > (volume_threshold * df['volume'].rolling(window=10).mean())
 
-    # Verifica se os indicadores foram calculados corretamente
-    missing_indicators = []
-    if df[['SMA_10', 'SMA_60', 'RSI', 'Volume_Filter', 'ATR', 'ADX', 'EMA_20', 'EMA_50']].iloc[-1].isna().any():
-        missing_indicators = df[['SMA_10', 'SMA_60', 'RSI', 'Volume_Filter', 'ATR', 'ADX', 'EMA_20', 'EMA_50']].iloc[-1].isna()
-        logger.warning(f"Indicadores ausentes: {missing_indicators[missing_indicators].index.tolist()}")
+    # Verifica se os indicadores estão prontos para uso
+    if df[['SMA_10', 'SMA_60', 'RSI', 'Volume_Filter', 'EMA_20', 'EMA_50']].iloc[-1].isna().any():
+        logger.warning("Um ou mais indicadores contêm valores NaN. Verifique os dados históricos.")
+        return None, None, None, None, None, None
 
-    # Valores finais para retorno
-    short_ma = df['SMA_10'].iloc[-1] if not pd.isna(df['SMA_10'].iloc[-1]) else None
-    long_ma = df['SMA_60'].iloc[-1] if not pd.isna(df['SMA_60'].iloc[-1]) else None
-    rsi = df['RSI'].iloc[-1] if not pd.isna(df['RSI'].iloc[-1]) else None
-    volume_filter = df['Volume_Filter'].iloc[-1] if not pd.isna(df['Volume_Filter'].iloc[-1]) else None
-    atr = df['ATR'].iloc[-1] if not pd.isna(df['ATR'].iloc[-1]) else None
-    adx = df['ADX'].iloc[-1] if not pd.isna(df['ADX'].iloc[-1]) else None
-    ema_20 = df['EMA_20'].iloc[-1] if not pd.isna(df['EMA_20'].iloc[-1]) else None
-    ema_50 = df['EMA_50'].iloc[-1] if not pd.isna(df['EMA_50'].iloc[-1]) else None
+    short_ma = df['SMA_10'].iloc[-1]
+    long_ma = df['SMA_60'].iloc[-1]
+    rsi = df['RSI'].iloc[-1]
+    volume_filter = df['Volume_Filter'].iloc[-1]
+    ema_20 = df['EMA_20'].iloc[-1]
+    ema_50 = df['EMA_50'].iloc[-1]
 
-    return short_ma, long_ma, rsi, volume_filter, atr, adx, ema_20, ema_50
-
-
-
+    return short_ma, long_ma, rsi, volume_filter, ema_20, ema_50
 
 def format_quantity(quantity):
     """Formata a quantidade para 8 casas decimais, sem notação científica."""
@@ -82,116 +65,201 @@ def calculate_profit(last_price, current_price):
     return (current_price - last_price) / last_price
 
 
-def small_portfolio_strategy(asset, price, portfolio_manager, df, max_consecutive_trades=5):
+def small_portfolio_strategy(asset, price, portfolio_manager, df, max_consecutive_sells=5, max_consecutive_buys=5):
     global last_buy, last_sell
     consecutive_sell_blocks, consecutive_buy_blocks = load_block_counts()
+    print(f"consecutive_sell_blocks = {consecutive_sell_blocks}")
+    print(f"consecutive_buy_blocks = {consecutive_buy_blocks}")
 
     risk_manager = RiskManager(portfolio_manager)
     cash_balance = float(portfolio_manager.get_cash_balance())
     asset_quantity = float(portfolio_manager.get_balance(asset.replace('USDT', '')))
     price = float(price)
 
-    # Calcular indicadores
-    short_ma, long_ma, rsi, volume_filter, atr, adx, ema_20, ema_50 = calculate_indicators(df)
-    if None in (short_ma, long_ma, rsi, volume_filter, atr, adx):
-        logger.warning("Indicadores insuficientes para tomar decisão. Mantendo posição.")
+    market_trend = risk_manager.determine_market_trend(df)
+    max_consecutive_trades = risk_manager.adapt_max_consecutive_trades(market_trend)
+
+    consecutive_sells = get_consecutive_trades(asset, 'sell')
+    consecutive_buys = get_consecutive_trades(asset, 'buy')
+
+    MIN_PROFIT_PERCENTAGE = 0.0015  # 0,15% de lucro
+    STOP_LOSS_PERCENTAGE = 0.0018  # 0,18% de perda
+    THRESHOLD_FACTOR = 0.985
+
+    # Limite de tempo para vendas recentes
+    max_time_diff = timedelta(hours=4)
+    # Obtém o horário da última venda
+    last_sell_time = get_last_transaction_time(transactions, 'sells')
+    
+    recent_sell = False
+    if last_sell_time:
+        last_sell_time = datetime.fromtimestamp(int(last_sell_time))
+        recent_sell = (datetime.now() - last_sell_time) <= max_time_diff
+
+    # Verifica o horário da última compra
+    last_buy_time = get_last_transaction_time(transactions, 'buys')
+
+    recent_buy = False
+    if last_buy_time:
+        last_buy_time = datetime.fromtimestamp(int(last_buy_time))
+        recent_buy = (datetime.now() - last_buy_time) <= max_time_diff
+
+    print(f"recent_sell={recent_sell}, recent_buy={recent_buy}")
+
+    # Obter os indicadores e verificar a validade
+    short_ma, long_ma, rsi, volume_filter, _, _ = calculate_indicators(df)
+    clean_transactions_outside_market_average(transactions, short_ma, THRESHOLD_FACTOR, recent_sell, recent_buy, price)
+
+    # Calcular médias curtas de compra e venda
+    average_buy_price = get_average_price(transactions, "buys")
+    average_sell_price = get_average_price(transactions, "sells")
+
+    # Inicializando target_sell_price e target_buy_price
+    target_sell_price = 0
+    target_buy_price = 0
+
+
+
+    # Lógica para determinar se a condição de broke cold está atendida
+    if ((not recent_sell or (last_buy == 0 and last_sell == 0)) and average_buy_price < price) or consecutive_buy_blocks >= 100 and last_sell <= 0 :
+        sell_broke_cold = True
+        buy_broke_cold = False
+        target_sell_price = 0
+        logger.info("Condição sell_broke_cold atendida: average_buy_price é menor que o preço atual. target_sell_price e target_buy_price definidos como 0.")
+    elif ((not recent_buy or (last_buy == 0 and last_sell == 0))  and average_sell_price > price) or consecutive_sell_blocks >= 100 and last_buy <= 0:
+        buy_broke_cold = True
+        sell_broke_cold = False
+        target_buy_price = 0
+        logger.info("Condição buy_broke_cold atendida: average_sell_price é maior que o preço atual. target_sell_price e target_buy_price definidos como 0.")
+    else:
+        # Condições para cálculo de target_sell_price
+        sell_broke_cold = False
+        buy_broke_cold = False
+        logger.info("Nenhuma condição 'broke cold' atendida. Calculando target_sell_price e target_buy_price.")
+
+        # Definindo target_sell_price
+        if average_buy_price > 0 and last_buy > 0:
+            target_sell_price = average_buy_price * (1 + MIN_PROFIT_PERCENTAGE)
+            logger.info(f"target_sell_price calculado com average_buy_price: {target_sell_price}")
+        elif last_buy > 0:
+            target_sell_price = last_buy * (1 + MIN_PROFIT_PERCENTAGE)
+            logger.info(f"target_sell_price calculado com last_buy: {target_sell_price}")
+        else:
+            target_sell_price = 0
+            logger.info("target_sell_price definido como 0, pois não há dados de compra suficientes.")
+
+        # Definindo target_buy_price
+        if average_sell_price > 0 and last_sell > 0:
+            target_buy_price = average_sell_price * (1 - 2 * STOP_LOSS_PERCENTAGE)
+            logger.info(f"target_buy_price calculado com average_sell_price: {target_buy_price}")
+        elif last_sell > 0:
+            target_buy_price = last_sell * (1 - 2 * STOP_LOSS_PERCENTAGE)
+            logger.info(f"target_buy_price calculado com last_sell: {target_buy_price}")
+        else:
+            target_buy_price = 0
+            logger.info("target_buy_price definido como 0, pois não há dados de venda suficientes.")
+
+    # Logs para verificar as condições finais de broke cold
+    logger.info(f"Condições finais - buy_broke_cold: {buy_broke_cold}, sell_broke_cold: {sell_broke_cold}")
+    logger.info(f"target_buy_price: {target_buy_price}, target_sell_price: {target_sell_price}")
+
+    # Integração com get_recent_prices para obter média de curto prazo caso não haja histórico suficiente
+    if (average_buy_price <= 0 or last_buy <= 0 or not last_buy_time) and not buy_broke_cold:
+        logger.info("Nenhum registro recente de compra disponível no JSON. Usando média de preços recentes para average_buy_price.")
+        average_buy_price = get_recent_prices(asset)
+
+    if (average_sell_price <= 0 or last_sell <= 0 or not last_sell_time) and not sell_broke_cold:
+        logger.info("Nenhum registro recente de venda disponível no JSON. Usando média de preços recentes para average_sell_price.")
+        average_sell_price = get_recent_prices(asset)
+
+
+
+    logger.info("Estratégia Small Portfolio ativada.")
+    logger.info(f"Condições de compra: target_buy_price={target_buy_price}, recent_sell={recent_sell}, consecutive_buys={consecutive_buys}")
+
+    
+    logger.info(f"Indicadores: short_ma={short_ma}, long_ma={long_ma}, rsi={rsi}, volume_filter={volume_filter}")
+
+    if None in (short_ma, long_ma, rsi, volume_filter):
+        logger.warning("Indicadores insuficientes para tomar decisão de compra/venda.")
         return {
             'asset': asset,
             'quantity': 0,
             'price': price,
             'type': 'hold',
-            'reason': "Hold - Indicadores insuficientes"
+            'reason': "Hold - Dados insuficientes para indicadores"
         }
 
-    # Ajuste dinâmico de lucros e perdas com base no ATR
-    MAX_PROFIT = 0.05  # 5%
-    MAX_STOP_LOSS = 0.03  # 3%
-    MIN_PROFIT_PERCENTAGE = min(max(0.0015, atr / price), MAX_PROFIT)
-    STOP_LOSS_PERCENTAGE = min(max(0.0020, atr / price), MAX_STOP_LOSS)
-
-    # Ajuste adicional para mercados laterais
-    if adx < 25:
-        MIN_PROFIT_PERCENTAGE = min(MIN_PROFIT_PERCENTAGE, 0.02)
-        STOP_LOSS_PERCENTAGE = min(STOP_LOSS_PERCENTAGE, 0.01)
-
-    logger.info(f"ATR: {atr:.6f}, ADX: {adx:.2f}")
-    logger.info(f"Lucro mínimo ajustado: {MIN_PROFIT_PERCENTAGE * 100:.2f}%, Stop-Loss ajustado: {STOP_LOSS_PERCENTAGE * 100:.2f}%")
-
-    # Logs detalhados dos indicadores
-    logger.info(f"Indicadores: short_ma={short_ma:.2f}, long_ma={long_ma:.2f}, rsi={rsi:.2f}, volume_filter={volume_filter}, ema_20={ema_20:.2f}, ema_50={ema_50:.2f}")
-
-    # ----- Decisão de Compra -----
-    def decide_buy():
-        if short_ma < long_ma * 0.995 and rsi < 50 and volume_filter:
-            quantity_to_buy = (cash_balance * portfolio_manager.get_investment_percentage()) / price
+    # Condições de compra aprimoradas
+    if consecutive_buys < max_consecutive_trades or consecutive_sell_blocks >= 100:
+        if (short_ma < long_ma * 0.995) or rsi < 50 or (recent_sell and price <= target_buy_price) or buy_broke_cold and not sell_broke_cold:
+            quantity_to_buy = min((cash_balance * portfolio_manager.get_investment_percentage()) / price, 
+                                  portfolio_manager.get_investment_percentage() * asset_quantity)
             quantity_to_buy = format_quantity(max(quantity_to_buy, min_asset_quantity))
 
-            if risk_manager.can_trade(asset, 'buy', float(quantity_to_buy), price, df):
-                logger.info(f"Condição de compra atendida: short_ma < long_ma, RSI < 50, volume_filter=True. Comprando {quantity_to_buy} {asset}.")
+            logger.info(f"Valores de compra: quantity_to_buy={quantity_to_buy}, price={price}, cash_balance={cash_balance}")
+            if float(quantity_to_buy) >= min_asset_quantity and risk_manager.can_trade(asset, 'buy', float(quantity_to_buy), price, df):
                 add_transaction(transactions, "buys", price)
                 consecutive_buy_blocks = 0
+                consecutive_sell_blocks = 0
                 save_block_counts(consecutive_sell_blocks, consecutive_buy_blocks)
+
+                logger.info("Condições de compra atendidas. Executando compra.")
+                log_transaction_details("compra", asset, quantity_to_buy, price)
                 return {
                     'asset': asset,
                     'quantity': float(quantity_to_buy),
                     'price': price,
                     'type': 'buy',
-                    'reason': "Compra baseada nos indicadores"
+                    'reason': "Compra em oportunidade de curto prazo com base em indicadores e limite de compras consecutivas"
                 }
-            else:
-                logger.info("Compra bloqueada pelo RiskManager.")
         else:
-            logger.info("Condições de compra não atendidas.")
-            logger.info(f"Motivos: short_ma={short_ma}, long_ma={long_ma}, rsi={rsi}, volume_filter={volume_filter}, cash_balance={cash_balance:.2f}")
-        return None
+            logger.info("Condições de compra não atendidas. Valores atuais: "
+                        f"short_ma={short_ma}, long_ma={long_ma}, rsi={rsi}, price={price}, target_buy_price={target_buy_price}")
+    else:
+        consecutive_buy_blocks += 1
+        consecutive_sell_blocks = 0
+        save_block_counts(consecutive_sell_blocks, consecutive_buy_blocks)
+        logger.info(f"Condição de vompra não atingida: Limite de quantidade de compras")
 
-    # ----- Decisão de Venda -----
-    def decide_sell():
-        average_buy_price = get_average_price(transactions, "buys")
-        target_sell_price = average_buy_price * (1 + MIN_PROFIT_PERCENTAGE)
+    # Condições de venda
+    if consecutive_sells < max_consecutive_trades or consecutive_buy_blocks >= 100:
+        if price >= target_sell_price or not buy_broke_cold and sell_broke_cold:
+            quantity_to_sell = min(asset_quantity * portfolio_manager.get_investment_percentage(), asset_quantity - min_asset_quantity)
+            quantity_to_sell = format_quantity(max(quantity_to_sell, min_asset_quantity))
 
-        if price >= target_sell_price:
-            quantity_to_sell = format_quantity(min(asset_quantity, asset_quantity - min_asset_quantity))
-
-            if risk_manager.can_trade(asset, 'sell', float(quantity_to_sell), price, df):
-                profit = calculate_profit(average_buy_price, price)
-                logger.info(f"Condição de venda atendida: preço >= target_sell_price. Vendendo {quantity_to_sell} {asset} com lucro de {profit * 100:.2f}%.")
+            logger.info(f"Valores de venda: quantity_to_sell={quantity_to_sell}, price={price}, asset_quantity={asset_quantity}")
+            if float(quantity_to_sell) >= min_asset_quantity and risk_manager.can_trade(asset, 'sell', float(quantity_to_sell), price, df):
+                profit = calculate_profit(last_buy, price) if last_buy else 0
                 add_transaction(transactions, "sells", price)
+                consecutive_buy_blocks = 0
                 consecutive_sell_blocks = 0
                 save_block_counts(consecutive_sell_blocks, consecutive_buy_blocks)
+                logger.info(f"Venda realizada com lucro de {profit*100:.2f}%.")
+                log_transaction_details("venda", asset, quantity_to_sell, price, profit)
                 return {
                     'asset': asset,
                     'quantity': float(quantity_to_sell),
                     'price': price,
                     'type': 'sell',
-                    'reason': "Venda baseada no lucro"
+                    'reason': "Venda para lucro a curto prazo em carteira pequena com limite de vendas consecutivas"
                 }
-            else:
-                logger.info("Venda bloqueada pelo RiskManager.")
         else:
-            logger.info("Condições de venda não atendidas.")
-            logger.info(f"Motivos: price={price:.2f}, target_sell_price={target_sell_price:.2f}, asset_quantity={asset_quantity:.8f}")
-        return None
+            logger.info(f"Condição de venda não atingida: preço atual ({price}) >= preço-alvo ({target_sell_price}).")
+    else:
+        consecutive_sell_blocks += 1
+        consecutive_buy_blocks = 0
+        save_block_counts(consecutive_sell_blocks, consecutive_buy_blocks)
+        logger.info(f"Condição de venda não atingida: Limite de quantidade de vendas")
 
-    # Executa decisões
-    buy_decision = decide_buy()
-    if buy_decision:
-        return buy_decision
-
-    sell_decision = decide_sell()
-    if sell_decision:
-        return sell_decision
-
-    # Nenhuma decisão tomada
-    logger.info("Nenhuma condição de compra ou venda atendida. Mantendo posição.")
+    logger.info("Nenhuma transação realizada para carteira pequena.")
     return {
         'asset': asset,
         'quantity': 0,
         'price': price,
         'type': 'hold',
-        'reason': "Hold - Nenhuma condição de trade atendida"
+        'reason': "Hold - Estratégia de acúmulo em carteira pequena"
     }
-
 
 
 def mature_portfolio_strategy(asset, price, portfolio_manager, df, indicators):
