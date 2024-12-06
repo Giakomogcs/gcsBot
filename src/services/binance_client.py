@@ -1,13 +1,20 @@
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-
+import os
 from binance.client import Client
 import pandas as pd
 from datetime import datetime, timedelta
-from src.config import API_KEY, API_SECRET
+from dotenv import load_dotenv
 from decimal import Decimal, ROUND_DOWN
 import logging
+
+# Carregar variáveis do .env
+load_dotenv()
+
+# Obter as variáveis de ambiente
+API_KEY = os.getenv('BINANCE_API_KEY')
+API_SECRET = os.getenv('BINANCE_API_SECRET')
 
 # Configuração do logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
